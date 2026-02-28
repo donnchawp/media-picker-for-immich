@@ -239,12 +239,14 @@ class Immich_Media_Picker {
 				max-width: 200px;
 			}
 			.immich-grid {
-				display: grid;
-				grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+				display: flex;
+				flex-wrap: wrap;
 				gap: 8px;
 				padding: 16px;
 				overflow-y: auto;
-				max-height: calc(100% - 80px);
+				flex: 1;
+				min-height: 0;
+				align-content: flex-start;
 			}
 			.immich-thumb {
 				position: relative;
@@ -252,7 +254,9 @@ class Immich_Media_Picker {
 				border: 3px solid transparent;
 				border-radius: 4px;
 				overflow: hidden;
-				aspect-ratio: 1;
+				width: 150px;
+				height: 150px;
+				flex-shrink: 0;
 			}
 			.immich-thumb img {
 				width: 100%;
