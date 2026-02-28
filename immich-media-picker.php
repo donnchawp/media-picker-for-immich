@@ -26,6 +26,10 @@ class Immich_Media_Picker {
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_settings_page' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
+		add_action( 'show_user_profile', array( $this, 'render_user_api_key_field' ) );
+		add_action( 'edit_user_profile', array( $this, 'render_user_api_key_field' ) );
+		add_action( 'personal_options_update', array( $this, 'save_user_api_key' ) );
+		add_action( 'edit_user_profile_update', array( $this, 'save_user_api_key' ) );
 	}
 
 	public function add_settings_page(): void {
@@ -121,6 +125,22 @@ class Immich_Media_Picker {
 		echo '<p class="description">' . esc_html__( 'When set, all users will use this key. Leave empty to allow per-user keys.', 'immich-media-picker' ) . '</p>';
 	}
 
+	private function get_api_key( int $user_id = 0 ): string {
+		$settings = get_option( 'immich_settings', array() );
+		if ( ! empty( $settings['api_key'] ) ) {
+			return $settings['api_key'];
+		}
+		if ( 0 === $user_id ) {
+			$user_id = get_current_user_id();
+		}
+		return get_user_meta( $user_id, 'immich_api_key', true ) ?: '';
+	}
+
+	private function get_api_url(): string {
+		$settings = get_option( 'immich_settings', array() );
+		return $settings['api_url'] ?? self::DEFAULT_API_URL;
+	}
+
 	public function render_settings_page(): void {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -137,6 +157,35 @@ class Immich_Media_Picker {
 			</form>
 		</div>
 		<?php
+	}
+
+	public function render_user_api_key_field( \WP_User $user ): void {
+		$settings = get_option( 'immich_settings', array() );
+		// Hide if site-wide key is set.
+		if ( ! empty( $settings['api_key'] ) ) {
+			return;
+		}
+		$value = get_user_meta( $user->ID, 'immich_api_key', true );
+		?>
+		<h2><?php esc_html_e( 'Immich', 'immich-media-picker' ); ?></h2>
+		<table class="form-table">
+			<tr>
+				<th><label for="immich_api_key"><?php esc_html_e( 'API Key', 'immich-media-picker' ); ?></label></th>
+				<td>
+					<input type="password" name="immich_api_key" id="immich_api_key" value="<?php echo esc_attr( $value ); ?>" class="regular-text" />
+					<p class="description"><?php esc_html_e( 'Your personal Immich API key.', 'immich-media-picker' ); ?></p>
+				</td>
+			</tr>
+		</table>
+		<?php
+	}
+
+	public function save_user_api_key( int $user_id ): void {
+		if ( ! current_user_can( 'edit_user', $user_id ) ) {
+			return;
+		}
+		$key = sanitize_text_field( wp_unslash( $_POST['immich_api_key'] ?? '' ) );
+		update_user_meta( $user_id, 'immich_api_key', $key );
 	}
 }
 
