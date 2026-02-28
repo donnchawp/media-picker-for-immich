@@ -220,10 +220,6 @@
 				delete this.selected[id];
 				$thumb.removeClass('selected');
 			} else {
-				if ( this.controller && ! this.controller.options.multiple ) {
-					this.$('.immich-thumb').removeClass('selected');
-					this.selected = {};
-				}
 				this.selected[id] = true;
 				$thumb.addClass('selected');
 			}
