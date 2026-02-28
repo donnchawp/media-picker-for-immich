@@ -532,7 +532,14 @@ class Immich_Media_Picker {
 
 		$dest_url = trailingslashit( $upload_dir['url'] ) . $dest;
 
-		$mime       = mime_content_type( $dest_path ) ?: 'application/octet-stream';
+		$mime          = mime_content_type( $dest_path ) ?: 'application/octet-stream';
+		$allowed_mimes = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff', 'video/mp4', 'video/quicktime' );
+		if ( ! in_array( $mime, $allowed_mimes, true ) ) {
+			wp_delete_file( $dest_path );
+			wp_send_json_error( 'Unsupported file type: ' . $mime );
+			return;
+		}
+
 		$attachment = array(
 			'post_title'     => pathinfo( $filename, PATHINFO_FILENAME ),
 			'post_mime_type' => $mime,

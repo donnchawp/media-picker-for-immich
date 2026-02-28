@@ -57,6 +57,9 @@
 						);
 					});
 				},
+				error: function () {
+					console.warn('[Immich] Failed to load people filter.');
+				},
 			});
 		},
 
@@ -104,7 +107,7 @@
 				success: function (resp) {
 					self.$('.immich-status').text('');
 					if ( ! resp.success ) {
-						self.$('.immich-status').text('Error: ' + (resp.data || 'Unknown error'));
+						self.$('.immich-status').text('Search failed. Please try again.');
 						return;
 					}
 					self.renderGrid(resp.data || []);
@@ -175,14 +178,21 @@
 			var failed = 0;
 			var total = ids.length;
 
-			ids.forEach(function (id) {
+			function importNext(index) {
+				if ( index >= ids.length ) {
+					self.checkComplete(imported, failed, total, $btn);
+					return;
+				}
+
+				$btn.text('Importing ' + (index + 1) + ' of ' + total + '...');
+
 				$.ajax({
 					url: config.ajaxUrl,
 					method: 'POST',
 					data: {
 						action: 'immich_import',
 						nonce: config.nonce,
-						id: id,
+						id: ids[index],
 					},
 					dataType: 'json',
 					success: function (resp) {
@@ -197,15 +207,17 @@
 						} else {
 							failed++;
 						}
-						self.checkComplete(imported, failed, total, $btn);
+						importNext(index + 1);
 					},
 					error: function () {
 						imported++;
 						failed++;
-						self.checkComplete(imported, failed, total, $btn);
+						importNext(index + 1);
 					},
 				});
-			});
+			}
+
+			importNext(0);
 		},
 
 		checkComplete: function (imported, failed, total, $btn) {
@@ -260,18 +272,18 @@
 				priority: 60,
 			});
 		};
+
+		var originalSelectBind = wp.media.view.MediaFrame.Select.prototype.bindHandlers;
+
+		wp.media.view.MediaFrame.Select.prototype.bindHandlers = function () {
+			originalSelectBind.call(this);
+			this.on('content:create:immich', function () {
+				var view = new ImmichBrowser({
+					controller: this,
+				});
+				this.content.set(view);
+			}, this);
+		};
 	}
-
-	var originalSelectBind = wp.media.view.MediaFrame.Select.prototype.bindHandlers;
-
-	wp.media.view.MediaFrame.Select.prototype.bindHandlers = function () {
-		originalSelectBind.call(this);
-		this.on('content:create:immich', function () {
-			var view = new ImmichBrowser({
-				controller: this,
-			});
-			this.content.set(view);
-		}, this);
-	};
 
 })(jQuery, wp);
