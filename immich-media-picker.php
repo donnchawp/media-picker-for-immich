@@ -34,6 +34,7 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_people', array( $this, 'ajax_people' ) );
 		add_action( 'wp_ajax_immich_thumbnail', array( $this, 'ajax_thumbnail' ) );
 		add_action( 'wp_ajax_immich_import', array( $this, 'ajax_import' ) );
+		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 	}
 
 	public function add_settings_page(): void {
@@ -196,6 +197,109 @@ class Immich_Media_Picker {
 			return false;
 		}
 		return true;
+	}
+
+	public function enqueue_assets(): void {
+		if ( ! current_user_can( 'upload_files' ) ) {
+			return;
+		}
+
+		$api_key = $this->get_api_key();
+		if ( '' === $api_key ) {
+			return;
+		}
+
+		wp_enqueue_script(
+			'immich-media-picker',
+			IMMICH_MEDIA_PICKER_URL . 'assets/js/immich-media-picker.js',
+			array( 'jquery', 'media-views' ),
+			IMMICH_MEDIA_PICKER_VERSION,
+			true
+		);
+
+		wp_localize_script( 'immich-media-picker', 'ImmichMediaPicker', array(
+			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce'   => wp_create_nonce( 'immich_nonce' ),
+		) );
+
+		wp_add_inline_style( 'media-views', '
+			.immich-toolbar {
+				display: flex;
+				gap: 8px;
+				padding: 16px;
+				align-items: center;
+				border-bottom: 1px solid #ddd;
+			}
+			.immich-search-input {
+				flex: 1;
+				min-width: 200px;
+				padding: 6px 10px;
+			}
+			.immich-people-select {
+				max-width: 200px;
+			}
+			.immich-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+				gap: 8px;
+				padding: 16px;
+				overflow-y: auto;
+				max-height: calc(100% - 80px);
+			}
+			.immich-thumb {
+				position: relative;
+				cursor: pointer;
+				border: 3px solid transparent;
+				border-radius: 4px;
+				overflow: hidden;
+				aspect-ratio: 1;
+			}
+			.immich-thumb img {
+				width: 100%;
+				height: 100%;
+				object-fit: cover;
+				display: block;
+			}
+			.immich-thumb .immich-check {
+				display: none;
+				position: absolute;
+				top: 4px;
+				right: 4px;
+				color: #fff;
+				background: #0073aa;
+				border-radius: 50%;
+				font-size: 20px;
+				width: 24px;
+				height: 24px;
+				line-height: 24px;
+				text-align: center;
+			}
+			.immich-thumb.selected {
+				border-color: #0073aa;
+			}
+			.immich-thumb.selected .immich-check {
+				display: block;
+			}
+			.immich-thumb:hover {
+				border-color: #0073aa;
+				opacity: 0.9;
+			}
+			.immich-status {
+				padding: 8px 16px;
+				color: #666;
+			}
+			.immich-no-results {
+				grid-column: 1 / -1;
+				text-align: center;
+				color: #666;
+				padding: 40px;
+			}
+			.immich-browser {
+				height: 100%;
+				display: flex;
+				flex-direction: column;
+			}
+		' );
 	}
 
 	public function render_settings_page(): void {
