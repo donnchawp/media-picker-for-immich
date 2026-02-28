@@ -282,9 +282,12 @@ class Immich_Media_Picker {
 		$items  = $response['assets']['items'] ?? array();
 		$result = array();
 		foreach ( $items as $asset ) {
+			if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $asset['id'] ?? '' ) ) {
+				continue;
+			}
 			$result[] = array(
 				'id'       => $asset['id'],
-				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . $asset['id'] . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
+				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . rawurlencode( $asset['id'] ) . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
 				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
 			);
 		}
@@ -313,7 +316,7 @@ class Immich_Media_Picker {
 			$result[] = array(
 				'id'       => $person['id'],
 				'name'     => $person['name'],
-				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . $person['thumbnailPath'] . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
+				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&type=person&id=' . urlencode( $person['id'] ) . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
 			);
 		}
 
@@ -325,7 +328,7 @@ class Immich_Media_Picker {
 			return;
 		}
 
-		$id = sanitize_text_field( $_GET['id'] ?? '' );
+		$id = sanitize_text_field( wp_unslash( $_GET['id'] ?? '' ) );
 		if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id ) ) {
 			wp_die( 'Invalid asset ID.', 400 );
 		}
@@ -335,7 +338,11 @@ class Immich_Media_Picker {
 			wp_die( 'No API key configured.', 500 );
 		}
 
-		$url      = rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/thumbnail';
+		$type = sanitize_key( $_GET['type'] ?? 'asset' );
+		$url  = 'person' === $type
+			? rtrim( $this->get_api_url(), '/' ) . '/api/people/' . $id . '/thumbnail'
+			: rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/thumbnail';
+
 		$response = wp_remote_get( $url, array(
 			'headers' => array( 'x-api-key' => $api_key ),
 			'timeout' => 30,
@@ -345,8 +352,17 @@ class Immich_Media_Picker {
 			wp_die( 'Failed to fetch thumbnail.', 502 );
 		}
 
-		$content_type = wp_remote_retrieve_header( $response, 'content-type' ) ?: 'image/jpeg';
-		$body         = wp_remote_retrieve_body( $response );
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( $code < 200 || $code >= 300 ) {
+			wp_die( 'Thumbnail not available.', (int) $code );
+		}
+
+		$content_type = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'image/jpeg', ';' );
+		$allowed      = array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' );
+		if ( ! in_array( $content_type, $allowed, true ) ) {
+			$content_type = 'image/jpeg';
+		}
+		$body = wp_remote_retrieve_body( $response );
 
 		header( 'Content-Type: ' . $content_type );
 		header( 'Cache-Control: public, max-age=86400' );
@@ -374,44 +390,60 @@ class Immich_Media_Picker {
 		$filename = sanitize_file_name( $info['originalFileName'] ?? $id . '.jpg' );
 
 		$api_key  = $this->get_api_key();
+		$tmp_file = wp_tempnam( $filename );
 		$url      = rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/original';
 		$response = wp_remote_get( $url, array(
-			'headers' => array( 'x-api-key' => $api_key ),
-			'timeout' => 120,
+			'headers'  => array( 'x-api-key' => $api_key ),
+			'timeout'  => 120,
+			'stream'   => true,
+			'filename' => $tmp_file,
 		) );
 
 		if ( is_wp_error( $response ) ) {
+			wp_delete_file( $tmp_file );
 			wp_send_json_error( 'Failed to download original: ' . $response->get_error_message() );
 			return;
 		}
 
-		$body = wp_remote_retrieve_body( $response );
-		if ( empty( $body ) ) {
-			wp_send_json_error( 'Empty response from Immich.' );
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( $code < 200 || $code >= 300 ) {
+			wp_delete_file( $tmp_file );
+			wp_send_json_error( 'Immich returned HTTP ' . $code );
 			return;
 		}
 
-		$upload = wp_upload_bits( $filename, null, $body );
-		if ( ! empty( $upload['error'] ) ) {
-			wp_send_json_error( 'Upload failed: ' . $upload['error'] );
+		$upload_dir = wp_upload_dir();
+		$dest       = wp_unique_filename( $upload_dir['path'], $filename );
+		$dest_path  = trailingslashit( $upload_dir['path'] ) . $dest;
+
+		if ( ! rename( $tmp_file, $dest_path ) ) {
+			wp_delete_file( $tmp_file );
+			wp_send_json_error( 'Failed to move file to uploads.' );
 			return;
 		}
 
-		$mime       = $upload['type'] ?: mime_content_type( $upload['file'] );
+		// Set correct permissions.
+		$stat = stat( dirname( $dest_path ) );
+		@chmod( $dest_path, $stat['mode'] & 0000666 );
+
+		$dest_url = trailingslashit( $upload_dir['url'] ) . $dest;
+
+		$mime       = mime_content_type( $dest_path ) ?: 'application/octet-stream';
 		$attachment = array(
 			'post_title'     => pathinfo( $filename, PATHINFO_FILENAME ),
 			'post_mime_type' => $mime,
 			'post_status'    => 'inherit',
 		);
 
-		$attach_id = wp_insert_attachment( $attachment, $upload['file'] );
+		$attach_id = wp_insert_attachment( $attachment, $dest_path );
 		if ( is_wp_error( $attach_id ) ) {
+			wp_delete_file( $dest_path );
 			wp_send_json_error( 'Failed to create attachment.' );
 			return;
 		}
 
 		require_once ABSPATH . 'wp-admin/includes/image.php';
-		$metadata = wp_generate_attachment_metadata( $attach_id, $upload['file'] );
+		$metadata = wp_generate_attachment_metadata( $attach_id, $dest_path );
 		wp_update_attachment_metadata( $attach_id, $metadata );
 
 		wp_send_json_success( array( 'attachmentId' => $attach_id ) );
