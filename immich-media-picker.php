@@ -21,6 +21,8 @@ define( 'IMMICH_MEDIA_PICKER_URL', plugin_dir_url( __FILE__ ) );
 
 class Immich_Media_Picker {
 
+	private const DEFAULT_API_URL = 'http://immich-server:2283';
+
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_settings_page' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
@@ -44,7 +46,7 @@ class Immich_Media_Picker {
 				'type'              => 'array',
 				'sanitize_callback' => array( $this, 'sanitize_settings' ),
 				'default'           => array(
-					'api_url' => 'http://immich-server:2283',
+					'api_url' => self::DEFAULT_API_URL,
 					'api_key' => '',
 				),
 			)
@@ -75,15 +77,34 @@ class Immich_Media_Picker {
 	}
 
 	public function sanitize_settings( array $input ): array {
+		$existing = get_option( 'immich_settings', array() );
+
+		$api_key = sanitize_text_field( $input['api_key'] ?? '' );
+		if ( '' === $api_key ) {
+			$api_key = $existing['api_key'] ?? '';
+		}
+
+		$raw_url = $input['api_url'] ?? '';
+		$api_url = esc_url_raw( $raw_url );
+		if ( '' === $api_url && '' !== $raw_url ) {
+			add_settings_error(
+				'immich_settings',
+				'invalid_api_url',
+				__( 'The API URL you entered is not valid. The previous URL has been kept.', 'immich-media-picker' ),
+				'error'
+			);
+			$api_url = $existing['api_url'] ?? '';
+		}
+
 		return array(
-			'api_url' => esc_url_raw( $input['api_url'] ?? '' ),
-			'api_key' => sanitize_text_field( $input['api_key'] ?? '' ),
+			'api_url' => $api_url,
+			'api_key' => $api_key,
 		);
 	}
 
 	public function render_api_url_field(): void {
 		$settings = get_option( 'immich_settings', array() );
-		$value    = $settings['api_url'] ?? 'http://immich-server:2283';
+		$value    = $settings['api_url'] ?? self::DEFAULT_API_URL;
 		printf(
 			'<input type="url" name="immich_settings[api_url]" value="%s" class="regular-text" />',
 			esc_attr( $value )
