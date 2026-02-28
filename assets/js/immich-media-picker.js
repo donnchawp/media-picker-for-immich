@@ -1,5 +1,277 @@
-/* Immich Media Picker - media modal integration */
 (function ($, wp) {
 	'use strict';
-	// Implementation in Task 6.
+
+	if ( ! wp || ! wp.media || ! wp.media.view ) {
+		return;
+	}
+
+	var config = window.ImmichMediaPicker || {};
+
+	/**
+	 * Immich browser content view.
+	 */
+	var ImmichBrowser = wp.media.View.extend({
+		className: 'immich-browser',
+		template: false,
+
+		events: {
+			'input .immich-search-input': 'onSearchInput',
+			'change .immich-people-select': 'onPeopleChange',
+			'click .immich-thumb': 'onThumbClick',
+			'click .immich-import-btn': 'onImportClick',
+		},
+
+		initialize: function () {
+			this.selected = {};
+			this.searchTimer = null;
+			this.render();
+			this.loadPeople();
+		},
+
+		render: function () {
+			this.$el.html(
+				'<div class="immich-toolbar">' +
+					'<input type="search" class="immich-search-input" placeholder="Search photos..." />' +
+					'<select class="immich-people-select"><option value="">All people</option></select>' +
+					'<button type="button" class="button button-primary immich-import-btn" disabled>Import Selected</button>' +
+				'</div>' +
+				'<div class="immich-grid"></div>' +
+				'<div class="immich-status"></div>'
+			);
+			return this;
+		},
+
+		loadPeople: function () {
+			var self = this;
+			$.ajax({
+				url: config.ajaxUrl,
+				method: 'GET',
+				data: { action: 'immich_people', nonce: config.nonce },
+				dataType: 'json',
+				success: function (resp) {
+					if ( ! resp.success || ! resp.data ) return;
+					var $select = self.$('.immich-people-select');
+					resp.data.forEach(function (person) {
+						$select.append(
+							$('<option>').val(person.id).text(person.name)
+						);
+					});
+				},
+			});
+		},
+
+		onSearchInput: function () {
+			var self = this;
+			clearTimeout(this.searchTimer);
+			this.searchTimer = setTimeout(function () {
+				self.doSearch();
+			}, 400);
+		},
+
+		onPeopleChange: function () {
+			this.doSearch();
+		},
+
+		doSearch: function () {
+			var self = this;
+			var query = this.$('.immich-search-input').val();
+			var personId = this.$('.immich-people-select').val();
+
+			var data = {
+				action: 'immich_search',
+				nonce: config.nonce,
+			};
+
+			if (personId) {
+				data.personIds = [personId];
+			}
+			if (query) {
+				data.query = query;
+			}
+
+			if ( ! query && ! personId ) {
+				this.$('.immich-grid').empty();
+				return;
+			}
+
+			this.$('.immich-status').text('Searching...');
+
+			$.ajax({
+				url: config.ajaxUrl,
+				method: 'POST',
+				data: data,
+				dataType: 'json',
+				success: function (resp) {
+					self.$('.immich-status').text('');
+					if ( ! resp.success ) {
+						self.$('.immich-status').text('Error: ' + (resp.data || 'Unknown error'));
+						return;
+					}
+					self.renderGrid(resp.data || []);
+				},
+				error: function () {
+					self.$('.immich-status').text('Request failed.');
+				},
+			});
+		},
+
+		renderGrid: function (items) {
+			var self = this;
+			var $grid = this.$('.immich-grid').empty();
+			this.selected = {};
+			this.updateImportButton();
+
+			if ( ! items.length ) {
+				$grid.html('<p class="immich-no-results">No results found.</p>');
+				return;
+			}
+
+			items.forEach(function (item) {
+				var $thumb = $(
+					'<div class="immich-thumb" data-id="' + _.escape(item.id) + '" data-filename="' + _.escape(item.filename) + '">' +
+						'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.filename) + '" />' +
+						'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
+					'</div>'
+				);
+				$grid.append($thumb);
+			});
+		},
+
+		onThumbClick: function (e) {
+			var $thumb = $(e.currentTarget);
+			var id = $thumb.data('id');
+
+			if ( this.selected[id] ) {
+				delete this.selected[id];
+				$thumb.removeClass('selected');
+			} else {
+				if ( ! this.controller.options.multiple ) {
+					this.$('.immich-thumb').removeClass('selected');
+					this.selected = {};
+				}
+				this.selected[id] = true;
+				$thumb.addClass('selected');
+			}
+
+			this.updateImportButton();
+		},
+
+		updateImportButton: function () {
+			var count = Object.keys(this.selected).length;
+			var $btn = this.$('.immich-import-btn');
+			$btn.prop('disabled', count === 0);
+			$btn.text(count > 1 ? 'Import ' + count + ' Selected' : 'Import Selected');
+		},
+
+		onImportClick: function () {
+			var self = this;
+			var ids = Object.keys(this.selected);
+			if ( ! ids.length ) return;
+
+			var $btn = this.$('.immich-import-btn');
+			$btn.prop('disabled', true).text('Importing...');
+
+			var imported = 0;
+			var failed = 0;
+			var total = ids.length;
+
+			ids.forEach(function (id) {
+				$.ajax({
+					url: config.ajaxUrl,
+					method: 'POST',
+					data: {
+						action: 'immich_import',
+						nonce: config.nonce,
+						id: id,
+					},
+					dataType: 'json',
+					success: function (resp) {
+						imported++;
+						if ( resp.success && resp.data && resp.data.attachmentId ) {
+							var attachment = wp.media.attachment(resp.data.attachmentId);
+							attachment.fetch().then(function () {
+								if ( self.controller.state().get('selection') ) {
+									self.controller.state().get('selection').add(attachment);
+								}
+							});
+						} else {
+							failed++;
+						}
+						self.checkComplete(imported, failed, total, $btn);
+					},
+					error: function () {
+						imported++;
+						failed++;
+						self.checkComplete(imported, failed, total, $btn);
+					},
+				});
+			});
+		},
+
+		checkComplete: function (imported, failed, total, $btn) {
+			if ( imported < total ) return;
+			$btn.prop('disabled', false).text('Import Selected');
+			if ( failed > 0 ) {
+				this.$('.immich-status').text((imported - failed) + ' imported, ' + failed + ' failed.');
+			} else {
+				this.$('.immich-status').text(imported + ' photo(s) imported.');
+			}
+			this.selected = {};
+			this.$('.immich-thumb').removeClass('selected');
+			this.updateImportButton();
+		},
+	});
+
+	/**
+	 * Hook into the Post media frame to add the Immich tab.
+	 */
+	var originalPostRouter = wp.media.view.MediaFrame.Post.prototype.browseRouter;
+
+	wp.media.view.MediaFrame.Post.prototype.browseRouter = function (routerView) {
+		originalPostRouter.call(this, routerView);
+		routerView.set('immich', {
+			text: 'Immich',
+			priority: 60,
+		});
+	};
+
+	var originalPostBind = wp.media.view.MediaFrame.Post.prototype.bindHandlers;
+
+	wp.media.view.MediaFrame.Post.prototype.bindHandlers = function () {
+		originalPostBind.call(this);
+		this.on('content:create:immich', function () {
+			var view = new ImmichBrowser({
+				controller: this,
+			});
+			this.content.set(view);
+		}, this);
+	};
+
+	/**
+	 * Hook into the Select media frame (featured image, etc).
+	 */
+	if ( wp.media.view.MediaFrame.Select.prototype.browseRouter ) {
+		var originalSelectRouter = wp.media.view.MediaFrame.Select.prototype.browseRouter;
+
+		wp.media.view.MediaFrame.Select.prototype.browseRouter = function (routerView) {
+			originalSelectRouter.call(this, routerView);
+			routerView.set('immich', {
+				text: 'Immich',
+				priority: 60,
+			});
+		};
+	}
+
+	var originalSelectBind = wp.media.view.MediaFrame.Select.prototype.bindHandlers;
+
+	wp.media.view.MediaFrame.Select.prototype.bindHandlers = function () {
+		originalSelectBind.call(this);
+		this.on('content:create:immich', function () {
+			var view = new ImmichBrowser({
+				controller: this,
+			});
+			this.content.set(view);
+		}, this);
+	};
+
 })(jQuery, wp);
