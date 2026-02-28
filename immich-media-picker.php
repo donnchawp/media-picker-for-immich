@@ -222,95 +222,12 @@ class Immich_Media_Picker {
 			'nonce'   => wp_create_nonce( 'immich_nonce' ),
 		) );
 
-		wp_add_inline_style( 'media-views', '
-			.immich-toolbar {
-				display: flex;
-				gap: 8px;
-				padding: 16px;
-				align-items: center;
-				border-bottom: 1px solid #ddd;
-			}
-			.immich-search-input {
-				flex: 1;
-				min-width: 200px;
-				padding: 6px 10px;
-			}
-			.immich-people-select {
-				max-width: 200px;
-			}
-			.immich-grid {
-				display: flex;
-				flex-wrap: wrap;
-				gap: 8px;
-				padding: 16px;
-				overflow-y: auto;
-				flex: 1;
-				min-height: 0;
-				align-content: flex-start;
-			}
-			.immich-thumb {
-				position: relative;
-				cursor: pointer;
-				border: 3px solid transparent;
-				border-radius: 4px;
-				overflow: hidden;
-				width: 150px;
-				height: 150px;
-				flex-shrink: 0;
-			}
-			.immich-thumb img {
-				width: 100%;
-				height: 100%;
-				object-fit: cover;
-				display: block;
-			}
-			.immich-thumb .immich-check {
-				display: none;
-				position: absolute;
-				top: 4px;
-				right: 4px;
-				color: #fff;
-				background: #0073aa;
-				border-radius: 50%;
-				font-size: 20px;
-				width: 24px;
-				height: 24px;
-				line-height: 24px;
-				text-align: center;
-			}
-			.immich-thumb.selected {
-				border-color: #0073aa;
-			}
-			.immich-thumb.selected .immich-check {
-				display: block;
-			}
-			.immich-thumb:hover {
-				border-color: #0073aa;
-				opacity: 0.9;
-			}
-			.immich-status {
-				display: flex;
-				align-items: center;
-				gap: 4px;
-				padding: 8px 16px;
-				color: #666;
-			}
-			.immich-status .spinner {
-				float: none;
-				margin: 0;
-			}
-			.immich-no-results {
-				grid-column: 1 / -1;
-				text-align: center;
-				color: #666;
-				padding: 40px;
-			}
-			.immich-browser {
-				height: 100%;
-				display: flex;
-				flex-direction: column;
-			}
-		' );
+		wp_enqueue_style(
+			'immich-media-picker',
+			plugin_dir_url( __FILE__ ) . 'assets/css/immich-media-picker.css',
+			array( 'media-views' ),
+			filemtime( plugin_dir_path( __FILE__ ) . 'assets/css/immich-media-picker.css' )
+		);
 	}
 
 	public function render_settings_page(): void {
