@@ -371,10 +371,10 @@ class Immich_Media_Picker {
 			return;
 		}
 
-		$query        = sanitize_text_field( wp_unslash( $_POST['query'] ?? '' ) );
+		$query        = sanitize_text_field( wp_unslash( $_POST['query'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
 		$uuid_pattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
 		$person_ids   = array_filter(
-			array_map( 'sanitize_text_field', (array) ( $_POST['personIds'] ?? array() ) ),
+			array_map( 'sanitize_text_field', isset( $_POST['personIds'] ) ? (array) wp_unslash( $_POST['personIds'] ) : array() ), // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
 			fn( $id ) => preg_match( $uuid_pattern, $id )
 		);
 
@@ -443,7 +443,7 @@ class Immich_Media_Picker {
 			return;
 		}
 
-		$id = sanitize_text_field( wp_unslash( $_GET['id'] ?? '' ) );
+		$id = sanitize_text_field( wp_unslash( $_GET['id'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
 		if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id ) ) {
 			wp_die( 'Invalid asset ID.', 400 );
 		}
@@ -453,7 +453,7 @@ class Immich_Media_Picker {
 			wp_die( 'No API key configured.', 500 );
 		}
 
-		$type = sanitize_key( $_GET['type'] ?? 'asset' );
+		$type = sanitize_key( $_GET['type'] ?? 'asset' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
 		$url  = 'person' === $type
 			? rtrim( $this->get_api_url(), '/' ) . '/api/people/' . $id . '/thumbnail'
 			: rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/thumbnail';
@@ -491,7 +491,7 @@ class Immich_Media_Picker {
 			return;
 		}
 
-		$id = sanitize_text_field( wp_unslash( $_POST['id'] ?? '' ) );
+		$id = sanitize_text_field( wp_unslash( $_POST['id'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
 		if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id ) ) {
 			wp_send_json_error( 'Invalid asset ID.' );
 			return;
@@ -532,7 +532,7 @@ class Immich_Media_Picker {
 		$mime          = mime_content_type( $tmp_file ) ?: 'application/octet-stream';
 		$allowed_mimes = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff', 'video/mp4', 'video/quicktime' );
 		if ( ! in_array( $mime, $allowed_mimes, true ) ) {
-			@unlink( $tmp_file );
+			wp_delete_file( $tmp_file );
 			wp_send_json_error( 'Unsupported file type.' );
 			return;
 		}
@@ -542,15 +542,19 @@ class Immich_Media_Picker {
 		$dest_path  = trailingslashit( $upload_dir['path'] ) . $dest;
 
 		if ( ! copy( $tmp_file, $dest_path ) ) {
-			@unlink( $tmp_file );
+			wp_delete_file( $tmp_file );
 			wp_send_json_error( 'Failed to move file to uploads.' );
 			return;
 		}
-		@unlink( $tmp_file );
+		wp_delete_file( $tmp_file );
 
-		// Set correct permissions.
-		$stat = stat( dirname( $dest_path ) );
-		@chmod( $dest_path, $stat['mode'] & 0000666 );
+		// Set correct permissions matching the parent directory.
+		$stat  = stat( dirname( $dest_path ) );
+		$perms = $stat['mode'] & 0000666;
+		if ( function_exists( 'WP_Filesystem' ) && WP_Filesystem() ) {
+			global $wp_filesystem;
+			$wp_filesystem->chmod( $dest_path, $perms );
+		}
 
 		$dest_url = trailingslashit( $upload_dir['url'] ) . $dest;
 
