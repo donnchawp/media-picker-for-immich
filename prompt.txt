@@ -1,0 +1,46 @@
+  Build a WordPress must-use plugin that adds an "Immich" tab to the WordPress media picker/uploader modal. The plugin should:
+
+  Architecture:
+  - Single PHP file at wp-content/mu-plugins/immich-media-picker.php
+  - Enqueues a JS file that hooks into the WordPress media modal (using wp.media.view)
+  - Adds an "Immich" tab/router alongside the existing "Upload Files" and "Media Library" tabs
+  - PHP acts as an API proxy so the browser never sees the Immich API key
+
+  Settings:
+  - Add a settings page under Settings > Immich with two fields:
+    - Immich API URL
+    - Immich API Key
+  - Store in wp_options
+
+  Search & Browse UI (in the media modal tab):
+  - Search box at the top that queries Immich's smart search (POST /api/search/smart with {"query": "...", "size": 50})
+  - A "People" dropdown/filter that lists recognized people from GET /api/people and filters by person when selected (use POST /api/search/metadata with personIds)
+  - Display results as a thumbnail grid (thumbnails via GET /api/assets/{id}/thumbnail)
+  - All API requests go through a WordPress AJAX proxy endpoint (admin-ajax.php) that adds the x-api-key header server-side
+
+  Import flow:
+  - Clicking a thumbnail selects it (visual highlight)
+  - A "Select" / "Insert" button imports the selected photo:
+    a. PHP backend fetches the original file from GET /api/assets/{id}/original
+    b. Saves it to the WordPress uploads directory using wp_upload_bits()
+    c. Creates a proper WordPress attachment post with wp_insert_attachment() and wp_generate_attachment_metadata()
+    d. Returns the new attachment ID to the JS
+    e. The JS selects it in the media modal as if it were a normal media library item
+
+  API Authentication:
+  - All Immich API calls happen server-side via wp_remote_get/wp_remote_post
+  - The API key is sent as x-api-key header
+  - The browser JS only talks to admin-ajax.php endpoints
+
+  AJAX endpoints needed (all via admin-ajax.php):
+  - immich_search — proxies smart search, returns array of {id, thumbUrl (proxied), filename}
+  - immich_people — proxies people list, returns array of {id, name, thumbUrl (proxied)}
+  - immich_thumbnail — proxies a thumbnail image (streams binary with correct content-type)
+  - immich_import — downloads original from Immich, imports into WP media library, returns attachment ID
+
+  Key details:
+  - Thumbnail URLs in search results should point to the local proxy (admin-ajax.php?action=immich_thumbnail&id=ASSET_ID) not directly to Immich
+  - Use nonces for all AJAX requests
+  - The Immich server is on the same Docker network as WordPress, reachable at http://immich-server:2283
+  - Support multiple selection if the media modal was opened in multi-select mode
+
