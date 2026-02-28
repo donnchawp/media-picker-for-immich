@@ -24,6 +24,11 @@
 		initialize: function () {
 			this.selected = {};
 			this.searchTimer = null;
+			this.currentPage = 1;
+			this.nextPage = null;
+			this.loading = false;
+			this.lastQuery = '';
+			this.lastPersonId = '';
 			this.render();
 			this.loadPeople();
 		},
@@ -38,6 +43,12 @@
 				'<div class="immich-grid"></div>' +
 				'<div class="immich-status"><span class="spinner"></span><span class="immich-status-text"></span></div>'
 			);
+
+			var self = this;
+			this.$('.immich-grid').on('scroll', function () {
+				self.onGridScroll();
+			});
+
 			return this;
 		},
 
@@ -75,30 +86,72 @@
 			this.doSearch();
 		},
 
+		onGridScroll: function () {
+			if ( this.loading || ! this.nextPage ) {
+				return;
+			}
+
+			var $grid = this.$('.immich-grid');
+			var scrollTop = $grid.scrollTop();
+			var scrollHeight = $grid[0].scrollHeight;
+			var clientHeight = $grid[0].clientHeight;
+
+			if ( scrollTop + clientHeight >= scrollHeight - 200 ) {
+				this.loadMore();
+			}
+		},
+
 		doSearch: function () {
-			var self = this;
 			var query = this.$('.immich-search-input').val();
 			var personId = this.$('.immich-people-select').val();
+
+			if ( ! query && ! personId ) {
+				this.$('.immich-grid').empty();
+				this.nextPage = null;
+				this.lastQuery = '';
+				this.lastPersonId = '';
+				return;
+			}
+
+			this.lastQuery = query;
+			this.lastPersonId = personId;
+			this.currentPage = 1;
+			this.nextPage = null;
+			this.selected = {};
+			this.updateImportButton();
+			this.$('.immich-grid').empty();
+
+			this.fetchPage(1, false);
+		},
+
+		loadMore: function () {
+			if ( ! this.nextPage ) return;
+			this.fetchPage(this.nextPage, true);
+		},
+
+		fetchPage: function (page, append) {
+			var self = this;
+			this.loading = true;
 
 			var data = {
 				action: 'immich_search',
 				nonce: config.nonce,
+				page: page,
 			};
 
-			if (personId) {
-				data.personIds = [personId];
+			if (this.lastPersonId) {
+				data.personIds = [this.lastPersonId];
 			}
-			if (query) {
-				data.query = query;
-			}
-
-			if ( ! query && ! personId ) {
-				this.$('.immich-grid').empty();
-				return;
+			if (this.lastQuery) {
+				data.query = this.lastQuery;
 			}
 
 			this.$('.spinner').addClass('is-active');
-			this.$('.immich-status-text').text('Searching...');
+			if ( ! append ) {
+				this.$('.immich-status-text').text('Searching...');
+			} else {
+				this.$('.immich-status-text').text('Loading more...');
+			}
 
 			$.ajax({
 				url: config.ajaxUrl,
@@ -108,21 +161,31 @@
 				success: function (resp) {
 					self.$('.spinner').removeClass('is-active');
 					self.$('.immich-status-text').text('');
+					self.loading = false;
+
 					if ( ! resp.success ) {
 						self.$('.immich-status-text').text('Search failed. Please try again.');
 						return;
 					}
-					self.renderGrid(resp.data || []);
+
+					var items = resp.data.items || [];
+					self.nextPage = resp.data.nextPage || null;
+
+					if ( append ) {
+						self.appendToGrid(items);
+					} else {
+						self.renderGrid(items);
+					}
 				},
 				error: function () {
 					self.$('.spinner').removeClass('is-active');
 					self.$('.immich-status-text').text('Request failed.');
+					self.loading = false;
 				},
 			});
 		},
 
 		renderGrid: function (items) {
-			var self = this;
 			var $grid = this.$('.immich-grid').empty();
 			this.selected = {};
 			this.updateImportButton();
@@ -131,6 +194,12 @@
 				$grid.html('<p class="immich-no-results">No results found.</p>');
 				return;
 			}
+
+			this.appendToGrid(items);
+		},
+
+		appendToGrid: function (items) {
+			var $grid = this.$('.immich-grid');
 
 			items.forEach(function (item) {
 				var $thumb = $(

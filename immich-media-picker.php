@@ -293,6 +293,8 @@ class Immich_Media_Picker {
 		}
 
 		$query        = sanitize_text_field( wp_unslash( $_POST['query'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
+		$page         = absint( $_POST['page'] ?? 1 ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
+		$page         = max( 1, $page );
 		$uuid_pattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
 		$person_ids   = array_filter(
 			array_map( 'sanitize_text_field', isset( $_POST['personIds'] ) ? (array) wp_unslash( $_POST['personIds'] ) : array() ), // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
@@ -300,16 +302,16 @@ class Immich_Media_Picker {
 		);
 
 		if ( '' !== $query ) {
-			$body = array( 'query' => $query, 'size' => 50 );
+			$body = array( 'query' => $query, 'size' => 50, 'page' => $page );
 			if ( ! empty( $person_ids ) ) {
 				$body['personIds'] = $person_ids;
 			}
 			$response = $this->api_request( '/api/search/smart', 'POST', $body );
 		} elseif ( ! empty( $person_ids ) ) {
-			$body     = array( 'personIds' => $person_ids );
+			$body     = array( 'personIds' => $person_ids, 'size' => 50, 'page' => $page );
 			$response = $this->api_request( '/api/search/metadata', 'POST', $body );
 		} else {
-			wp_send_json_success( array() );
+			wp_send_json_success( array( 'items' => array(), 'nextPage' => null ) );
 			return;
 		}
 
@@ -318,8 +320,9 @@ class Immich_Media_Picker {
 			return;
 		}
 
-		$items  = $response['assets']['items'] ?? array();
-		$result = array();
+		$items    = $response['assets']['items'] ?? array();
+		$next_page = $response['assets']['nextPage'] ?? null;
+		$result   = array();
 		foreach ( $items as $asset ) {
 			if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $asset['id'] ?? '' ) ) {
 				continue;
@@ -331,7 +334,7 @@ class Immich_Media_Picker {
 			);
 		}
 
-		wp_send_json_success( $result );
+		wp_send_json_success( array( 'items' => $result, 'nextPage' => $next_page ) );
 	}
 
 	public function ajax_people(): void {
