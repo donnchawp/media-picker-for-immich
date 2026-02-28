@@ -22,7 +22,100 @@ define( 'IMMICH_MEDIA_PICKER_URL', plugin_dir_url( __FILE__ ) );
 class Immich_Media_Picker {
 
 	public function __construct() {
-		// Hooks will be added in subsequent tasks.
+		add_action( 'admin_menu', array( $this, 'add_settings_page' ) );
+		add_action( 'admin_init', array( $this, 'register_settings' ) );
+	}
+
+	public function add_settings_page(): void {
+		add_options_page(
+			__( 'Immich Settings', 'immich-media-picker' ),
+			__( 'Immich', 'immich-media-picker' ),
+			'manage_options',
+			'immich-media-picker',
+			array( $this, 'render_settings_page' )
+		);
+	}
+
+	public function register_settings(): void {
+		register_setting(
+			'immich_settings_group',
+			'immich_settings',
+			array(
+				'type'              => 'array',
+				'sanitize_callback' => array( $this, 'sanitize_settings' ),
+				'default'           => array(
+					'api_url' => 'http://immich-server:2283',
+					'api_key' => '',
+				),
+			)
+		);
+
+		add_settings_section(
+			'immich_main',
+			__( 'Immich Server', 'immich-media-picker' ),
+			'__return_null',
+			'immich-media-picker'
+		);
+
+		add_settings_field(
+			'immich_api_url',
+			__( 'API URL', 'immich-media-picker' ),
+			array( $this, 'render_api_url_field' ),
+			'immich-media-picker',
+			'immich_main'
+		);
+
+		add_settings_field(
+			'immich_api_key',
+			__( 'Site-wide API Key', 'immich-media-picker' ),
+			array( $this, 'render_api_key_field' ),
+			'immich-media-picker',
+			'immich_main'
+		);
+	}
+
+	public function sanitize_settings( array $input ): array {
+		return array(
+			'api_url' => esc_url_raw( $input['api_url'] ?? '' ),
+			'api_key' => sanitize_text_field( $input['api_key'] ?? '' ),
+		);
+	}
+
+	public function render_api_url_field(): void {
+		$settings = get_option( 'immich_settings', array() );
+		$value    = $settings['api_url'] ?? 'http://immich-server:2283';
+		printf(
+			'<input type="url" name="immich_settings[api_url]" value="%s" class="regular-text" />',
+			esc_attr( $value )
+		);
+	}
+
+	public function render_api_key_field(): void {
+		$settings = get_option( 'immich_settings', array() );
+		$value    = $settings['api_key'] ?? '';
+		printf(
+			'<input type="password" name="immich_settings[api_key]" value="%s" class="regular-text" />',
+			esc_attr( $value )
+		);
+		echo '<p class="description">' . esc_html__( 'When set, all users will use this key. Leave empty to allow per-user keys.', 'immich-media-picker' ) . '</p>';
+	}
+
+	public function render_settings_page(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		?>
+		<div class="wrap">
+			<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+			<form action="options.php" method="post">
+				<?php
+				settings_fields( 'immich_settings_group' );
+				do_settings_sections( 'immich-media-picker' );
+				submit_button();
+				?>
+			</form>
+		</div>
+		<?php
 	}
 }
 
