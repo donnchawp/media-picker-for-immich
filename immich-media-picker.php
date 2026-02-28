@@ -364,8 +364,12 @@ class Immich_Media_Picker {
 			return;
 		}
 
-		$query      = sanitize_text_field( wp_unslash( $_POST['query'] ?? '' ) );
-		$person_ids = array_map( 'sanitize_text_field', (array) ( $_POST['personIds'] ?? array() ) );
+		$query        = sanitize_text_field( wp_unslash( $_POST['query'] ?? '' ) );
+		$uuid_pattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+		$person_ids   = array_filter(
+			array_map( 'sanitize_text_field', (array) ( $_POST['personIds'] ?? array() ) ),
+			fn( $id ) => preg_match( $uuid_pattern, $id )
+		);
 
 		if ( ! empty( $person_ids ) ) {
 			$body     = array( 'personIds' => $person_ids );
@@ -468,6 +472,7 @@ class Immich_Media_Picker {
 		}
 		$body = wp_remote_retrieve_body( $response );
 
+		header( 'X-Content-Type-Options: nosniff' );
 		header( 'Content-Type: ' . $content_type );
 		header( 'Cache-Control: public, max-age=86400' );
 		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
@@ -516,15 +521,25 @@ class Immich_Media_Picker {
 			return;
 		}
 
+		// Check MIME before moving to public directory.
+		$mime          = mime_content_type( $tmp_file ) ?: 'application/octet-stream';
+		$allowed_mimes = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff', 'video/mp4', 'video/quicktime' );
+		if ( ! in_array( $mime, $allowed_mimes, true ) ) {
+			@unlink( $tmp_file );
+			wp_send_json_error( 'Unsupported file type.' );
+			return;
+		}
+
 		$upload_dir = wp_upload_dir();
 		$dest       = wp_unique_filename( $upload_dir['path'], $filename );
 		$dest_path  = trailingslashit( $upload_dir['path'] ) . $dest;
 
-		if ( ! rename( $tmp_file, $dest_path ) ) {
-			wp_delete_file( $tmp_file );
+		if ( ! copy( $tmp_file, $dest_path ) ) {
+			@unlink( $tmp_file );
 			wp_send_json_error( 'Failed to move file to uploads.' );
 			return;
 		}
+		@unlink( $tmp_file );
 
 		// Set correct permissions.
 		$stat = stat( dirname( $dest_path ) );
@@ -532,15 +547,8 @@ class Immich_Media_Picker {
 
 		$dest_url = trailingslashit( $upload_dir['url'] ) . $dest;
 
-		$mime          = mime_content_type( $dest_path ) ?: 'application/octet-stream';
-		$allowed_mimes = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff', 'video/mp4', 'video/quicktime' );
-		if ( ! in_array( $mime, $allowed_mimes, true ) ) {
-			wp_delete_file( $dest_path );
-			wp_send_json_error( 'Unsupported file type: ' . $mime );
-			return;
-		}
-
 		$attachment = array(
+			'guid'           => $dest_url,
 			'post_title'     => pathinfo( $filename, PATHINFO_FILENAME ),
 			'post_mime_type' => $mime,
 			'post_status'    => 'inherit',

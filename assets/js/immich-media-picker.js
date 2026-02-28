@@ -148,7 +148,7 @@
 				delete this.selected[id];
 				$thumb.removeClass('selected');
 			} else {
-				if ( ! this.controller.options.multiple ) {
+				if ( this.controller && ! this.controller.options.multiple ) {
 					this.$('.immich-thumb').removeClass('selected');
 					this.selected = {};
 				}
@@ -174,13 +174,14 @@
 			var $btn = this.$('.immich-import-btn');
 			$btn.prop('disabled', true).text('Importing...');
 
-			var imported = 0;
+			var succeeded = 0;
 			var failed = 0;
+			var completed = 0;
 			var total = ids.length;
 
 			function importNext(index) {
 				if ( index >= ids.length ) {
-					self.checkComplete(imported, failed, total, $btn);
+					self.checkComplete(succeeded, failed, completed, total, $btn);
 					return;
 				}
 
@@ -196,8 +197,9 @@
 					},
 					dataType: 'json',
 					success: function (resp) {
-						imported++;
+						completed++;
 						if ( resp.success && resp.data && resp.data.attachmentId ) {
+							succeeded++;
 							var attachment = wp.media.attachment(resp.data.attachmentId);
 							attachment.fetch().then(function () {
 								if ( self.controller.state().get('selection') ) {
@@ -210,7 +212,7 @@
 						importNext(index + 1);
 					},
 					error: function () {
-						imported++;
+						completed++;
 						failed++;
 						importNext(index + 1);
 					},
@@ -220,13 +222,13 @@
 			importNext(0);
 		},
 
-		checkComplete: function (imported, failed, total, $btn) {
-			if ( imported < total ) return;
+		checkComplete: function (succeeded, failed, completed, total, $btn) {
+			if ( completed < total ) return;
 			$btn.prop('disabled', false).text('Import Selected');
 			if ( failed > 0 ) {
-				this.$('.immich-status').text((imported - failed) + ' imported, ' + failed + ' failed.');
+				this.$('.immich-status').text(succeeded + ' imported, ' + failed + ' failed.');
 			} else {
-				this.$('.immich-status').text(imported + ' photo(s) imported.');
+				this.$('.immich-status').text(succeeded + ' photo(s) imported.');
 			}
 			this.selected = {};
 			this.$('.immich-thumb').removeClass('selected');
