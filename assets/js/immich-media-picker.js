@@ -36,7 +36,7 @@
 					'<button type="button" class="button button-primary immich-import-btn" disabled>Import Selected</button>' +
 				'</div>' +
 				'<div class="immich-grid"></div>' +
-				'<div class="immich-status"></div>'
+				'<div class="immich-status"><span class="spinner"></span><span class="immich-status-text"></span></div>'
 			);
 			return this;
 		},
@@ -97,7 +97,8 @@
 				return;
 			}
 
-			this.$('.immich-status').text('Searching...');
+			this.$('.spinner').addClass('is-active');
+			this.$('.immich-status-text').text('Searching...');
 
 			$.ajax({
 				url: config.ajaxUrl,
@@ -105,15 +106,17 @@
 				data: data,
 				dataType: 'json',
 				success: function (resp) {
-					self.$('.immich-status').text('');
+					self.$('.spinner').removeClass('is-active');
+					self.$('.immich-status-text').text('');
 					if ( ! resp.success ) {
-						self.$('.immich-status').text('Search failed. Please try again.');
+						self.$('.immich-status-text').text('Search failed. Please try again.');
 						return;
 					}
 					self.renderGrid(resp.data || []);
 				},
 				error: function () {
-					self.$('.immich-status').text('Request failed.');
+					self.$('.spinner').removeClass('is-active');
+					self.$('.immich-status-text').text('Request failed.');
 				},
 			});
 		},
@@ -226,9 +229,9 @@
 			if ( completed < total ) return;
 			$btn.prop('disabled', false).text('Import Selected');
 			if ( failed > 0 ) {
-				this.$('.immich-status').text(succeeded + ' imported, ' + failed + ' failed.');
+				this.$('.immich-status-text').text(succeeded + ' imported, ' + failed + ' failed.');
 			} else {
-				this.$('.immich-status').text(succeeded + ' photo(s) imported.');
+				this.$('.immich-status-text').text(succeeded + ' photo(s) imported.');
 			}
 			this.selected = {};
 			this.$('.immich-thumb').removeClass('selected');

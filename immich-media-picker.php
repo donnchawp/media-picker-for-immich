@@ -285,8 +285,15 @@ class Immich_Media_Picker {
 				opacity: 0.9;
 			}
 			.immich-status {
+				display: flex;
+				align-items: center;
+				gap: 4px;
 				padding: 8px 16px;
 				color: #666;
+			}
+			.immich-status .spinner {
+				float: none;
+				margin: 0;
 			}
 			.immich-no-results {
 				grid-column: 1 / -1;
