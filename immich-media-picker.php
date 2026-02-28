@@ -84,9 +84,6 @@ class Immich_Media_Picker {
 		$existing = get_option( 'immich_settings', array() );
 
 		$api_key = sanitize_text_field( $input['api_key'] ?? '' );
-		if ( '' === $api_key ) {
-			$api_key = $existing['api_key'] ?? '';
-		}
 
 		$raw_url = $input['api_url'] ?? '';
 		$api_url = esc_url_raw( $raw_url );
@@ -133,6 +130,9 @@ class Immich_Media_Picker {
 		if ( 0 === $user_id ) {
 			$user_id = get_current_user_id();
 		}
+		if ( 0 === $user_id ) {
+			return '';
+		}
 		return get_user_meta( $user_id, 'immich_api_key', true ) ?: '';
 	}
 
@@ -168,6 +168,7 @@ class Immich_Media_Picker {
 		$value = get_user_meta( $user->ID, 'immich_api_key', true );
 		?>
 		<h2><?php esc_html_e( 'Immich', 'immich-media-picker' ); ?></h2>
+		<?php wp_nonce_field( 'immich_save_user_api_key_' . $user->ID, 'immich_user_api_key_nonce' ); ?>
 		<table class="form-table">
 			<tr>
 				<th><label for="immich_api_key"><?php esc_html_e( 'API Key', 'immich-media-picker' ); ?></label></th>
@@ -181,6 +182,15 @@ class Immich_Media_Picker {
 	}
 
 	public function save_user_api_key( int $user_id ): void {
+		if ( ! isset( $_POST['immich_user_api_key_nonce'] ) ) {
+			return;
+		}
+		if ( ! wp_verify_nonce(
+			sanitize_text_field( wp_unslash( $_POST['immich_user_api_key_nonce'] ) ),
+			'immich_save_user_api_key_' . $user_id
+		) ) {
+			return;
+		}
 		if ( ! current_user_can( 'edit_user', $user_id ) ) {
 			return;
 		}
