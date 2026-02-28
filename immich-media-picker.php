@@ -30,6 +30,10 @@ class Immich_Media_Picker {
 		add_action( 'edit_user_profile', array( $this, 'render_user_api_key_field' ) );
 		add_action( 'personal_options_update', array( $this, 'save_user_api_key' ) );
 		add_action( 'edit_user_profile_update', array( $this, 'save_user_api_key' ) );
+		add_action( 'wp_ajax_immich_search', array( $this, 'ajax_search' ) );
+		add_action( 'wp_ajax_immich_people', array( $this, 'ajax_people' ) );
+		add_action( 'wp_ajax_immich_thumbnail', array( $this, 'ajax_thumbnail' ) );
+		add_action( 'wp_ajax_immich_import', array( $this, 'ajax_import' ) );
 	}
 
 	public function add_settings_page(): void {
@@ -141,6 +145,59 @@ class Immich_Media_Picker {
 		return $settings['api_url'] ?? self::DEFAULT_API_URL;
 	}
 
+	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null ): array|\WP_Error {
+		$api_key = $this->get_api_key();
+		if ( '' === $api_key ) {
+			return new \WP_Error( 'no_api_key', __( 'No Immich API key configured.', 'immich-media-picker' ) );
+		}
+
+		$url  = rtrim( $this->get_api_url(), '/' ) . $endpoint;
+		$args = array(
+			'headers' => array(
+				'x-api-key'   => $api_key,
+				'Accept'       => 'application/json',
+				'Content-Type' => 'application/json',
+			),
+			'timeout' => 30,
+		);
+
+		if ( 'POST' === $method ) {
+			$args['body'] = wp_json_encode( $body ?? array() );
+			$response     = wp_remote_post( $url, $args );
+		} else {
+			$response = wp_remote_get( $url, $args );
+		}
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$json = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( $code < 200 || $code >= 300 ) {
+			return new \WP_Error(
+				'immich_api_error',
+				sprintf( 'Immich API returned %d', $code ),
+				array( 'status' => $code, 'body' => $json )
+			);
+		}
+
+		return $json ?? array();
+	}
+
+	private function verify_ajax_request(): bool {
+		if ( ! check_ajax_referer( 'immich_nonce', 'nonce', false ) ) {
+			wp_send_json_error( 'Invalid nonce.', 403 );
+			return false;
+		}
+		if ( ! current_user_can( 'upload_files' ) ) {
+			wp_send_json_error( 'Insufficient permissions.', 403 );
+			return false;
+		}
+		return true;
+	}
+
 	public function render_settings_page(): void {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -196,6 +253,168 @@ class Immich_Media_Picker {
 		}
 		$key = sanitize_text_field( wp_unslash( $_POST['immich_api_key'] ?? '' ) );
 		update_user_meta( $user_id, 'immich_api_key', $key );
+	}
+
+	public function ajax_search(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		$query      = sanitize_text_field( wp_unslash( $_POST['query'] ?? '' ) );
+		$person_ids = array_map( 'sanitize_text_field', (array) ( $_POST['personIds'] ?? array() ) );
+
+		if ( ! empty( $person_ids ) ) {
+			$body     = array( 'personIds' => $person_ids );
+			$response = $this->api_request( '/api/search/metadata', 'POST', $body );
+		} elseif ( '' !== $query ) {
+			$body     = array( 'query' => $query, 'size' => 50 );
+			$response = $this->api_request( '/api/search/smart', 'POST', $body );
+		} else {
+			wp_send_json_success( array() );
+			return;
+		}
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message() );
+			return;
+		}
+
+		$items  = $response['assets']['items'] ?? array();
+		$result = array();
+		foreach ( $items as $asset ) {
+			$result[] = array(
+				'id'       => $asset['id'],
+				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . $asset['id'] . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
+				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
+			);
+		}
+
+		wp_send_json_success( $result );
+	}
+
+	public function ajax_people(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		$response = $this->api_request( '/api/people' );
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message() );
+			return;
+		}
+
+		$people = $response['people'] ?? $response;
+		$result = array();
+		foreach ( $people as $person ) {
+			if ( empty( $person['name'] ) ) {
+				continue;
+			}
+			$result[] = array(
+				'id'       => $person['id'],
+				'name'     => $person['name'],
+				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . $person['thumbnailPath'] . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
+			);
+		}
+
+		wp_send_json_success( $result );
+	}
+
+	public function ajax_thumbnail(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		$id = sanitize_text_field( $_GET['id'] ?? '' );
+		if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id ) ) {
+			wp_die( 'Invalid asset ID.', 400 );
+		}
+
+		$api_key = $this->get_api_key();
+		if ( '' === $api_key ) {
+			wp_die( 'No API key configured.', 500 );
+		}
+
+		$url      = rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/thumbnail';
+		$response = wp_remote_get( $url, array(
+			'headers' => array( 'x-api-key' => $api_key ),
+			'timeout' => 30,
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			wp_die( 'Failed to fetch thumbnail.', 502 );
+		}
+
+		$content_type = wp_remote_retrieve_header( $response, 'content-type' ) ?: 'image/jpeg';
+		$body         = wp_remote_retrieve_body( $response );
+
+		header( 'Content-Type: ' . $content_type );
+		header( 'Cache-Control: public, max-age=86400' );
+		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
+		exit;
+	}
+
+	public function ajax_import(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		$id = sanitize_text_field( wp_unslash( $_POST['id'] ?? '' ) );
+		if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id ) ) {
+			wp_send_json_error( 'Invalid asset ID.' );
+			return;
+		}
+
+		$info = $this->api_request( '/api/assets/' . $id );
+		if ( is_wp_error( $info ) ) {
+			wp_send_json_error( $info->get_error_message() );
+			return;
+		}
+
+		$filename = sanitize_file_name( $info['originalFileName'] ?? $id . '.jpg' );
+
+		$api_key  = $this->get_api_key();
+		$url      = rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/original';
+		$response = wp_remote_get( $url, array(
+			'headers' => array( 'x-api-key' => $api_key ),
+			'timeout' => 120,
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( 'Failed to download original: ' . $response->get_error_message() );
+			return;
+		}
+
+		$body = wp_remote_retrieve_body( $response );
+		if ( empty( $body ) ) {
+			wp_send_json_error( 'Empty response from Immich.' );
+			return;
+		}
+
+		$upload = wp_upload_bits( $filename, null, $body );
+		if ( ! empty( $upload['error'] ) ) {
+			wp_send_json_error( 'Upload failed: ' . $upload['error'] );
+			return;
+		}
+
+		$mime       = $upload['type'] ?: mime_content_type( $upload['file'] );
+		$attachment = array(
+			'post_title'     => pathinfo( $filename, PATHINFO_FILENAME ),
+			'post_mime_type' => $mime,
+			'post_status'    => 'inherit',
+		);
+
+		$attach_id = wp_insert_attachment( $attachment, $upload['file'] );
+		if ( is_wp_error( $attach_id ) ) {
+			wp_send_json_error( 'Failed to create attachment.' );
+			return;
+		}
+
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+		$metadata = wp_generate_attachment_metadata( $attach_id, $upload['file'] );
+		wp_update_attachment_metadata( $attach_id, $metadata );
+
+		wp_send_json_success( array( 'attachmentId' => $attach_id ) );
 	}
 }
 
