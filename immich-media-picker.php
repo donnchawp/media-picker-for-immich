@@ -299,12 +299,15 @@ class Immich_Media_Picker {
 			fn( $id ) => preg_match( $uuid_pattern, $id )
 		);
 
-		if ( ! empty( $person_ids ) ) {
+		if ( '' !== $query ) {
+			$body = array( 'query' => $query, 'size' => 50 );
+			if ( ! empty( $person_ids ) ) {
+				$body['personIds'] = $person_ids;
+			}
+			$response = $this->api_request( '/api/search/smart', 'POST', $body );
+		} elseif ( ! empty( $person_ids ) ) {
 			$body     = array( 'personIds' => $person_ids );
 			$response = $this->api_request( '/api/search/metadata', 'POST', $body );
-		} elseif ( '' !== $query ) {
-			$body     = array( 'query' => $query, 'size' => 50 );
-			$response = $this->api_request( '/api/search/smart', 'POST', $body );
 		} else {
 			wp_send_json_success( array() );
 			return;
