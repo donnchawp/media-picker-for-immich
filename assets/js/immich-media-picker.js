@@ -233,6 +233,14 @@
 			this.selected = {};
 			this.$('.immich-thumb').removeClass('selected');
 			this.updateImportButton();
+
+			// Refresh the media library so imported images appear when switching tabs.
+			if ( succeeded > 0 ) {
+				var library = this.controller.state().get('library');
+				if ( library ) {
+					library._requery( true );
+				}
+			}
 		},
 	});
 
