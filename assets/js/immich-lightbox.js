@@ -10,29 +10,23 @@
 		if ( ! link ) {
 			return;
 		}
-		// Skip if the link also contains a video (misinserted content).
-		if ( link.querySelector('video') ) {
-			return;
-		}
 		e.preventDefault();
 
 		var overlay = document.createElement('div');
 		overlay.className = 'immich-lightbox';
 
-		var img = document.createElement('img');
-		img.src = link.href;
-		overlay.appendChild(img);
-
-		// Don't show lightbox if the image fails to load.
-		img.onerror = function () {
-			overlay.remove();
+		var img = new Image();
+		img.onload = function () {
+			overlay.appendChild(img);
+			document.body.appendChild(overlay);
+			overlay.offsetHeight;
+			overlay.classList.add('immich-lightbox-visible');
 		};
-
-		document.body.appendChild(overlay);
-
-		// Force reflow then add visible class for transition.
-		overlay.offsetHeight;
-		overlay.classList.add('immich-lightbox-visible');
+		img.onerror = function () {
+			// Not an image — navigate normally.
+			window.location = link.href;
+		};
+		img.src = link.href;
 
 		function close() {
 			overlay.classList.remove('immich-lightbox-visible');
