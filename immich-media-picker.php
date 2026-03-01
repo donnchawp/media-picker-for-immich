@@ -449,10 +449,24 @@ class Immich_Media_Picker {
 	}
 
 	public function maybe_enqueue_lightbox( string $content ): string {
-		if ( str_contains( $content, 'immich_media_proxy=original' ) ) {
+		if ( ! str_contains( $content, 'immich_media_proxy=original' ) ) {
+			return $content;
+		}
+
+		// Add data-immich-lightbox to <a> tags that link to an Immich original
+		// AND directly contain an <img>. Links wrapping video or other content
+		// are left alone.
+		$content = preg_replace(
+			'/(<a\b[^>]*href="[^"]*immich_media_proxy=original[^"]*"[^>]*)(>)\s*(<img\b)/si',
+			'$1 data-immich-lightbox$2$3',
+			$content
+		);
+
+		if ( str_contains( $content, 'data-immich-lightbox' ) ) {
 			wp_enqueue_style( 'immich-lightbox' );
 			wp_enqueue_script( 'immich-lightbox' );
 		}
+
 		return $content;
 	}
 

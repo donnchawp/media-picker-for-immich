@@ -2,11 +2,7 @@
 	'use strict';
 
 	document.addEventListener('click', function (e) {
-		// Only trigger on <img> clicks inside Immich image links.
-		if ( ! e.target.closest('img') ) {
-			return;
-		}
-		var link = e.target.closest('a[href*="immich_media_proxy=original"]');
+		var link = e.target.closest('a[data-immich-lightbox]');
 		if ( ! link ) {
 			return;
 		}
