@@ -20,6 +20,7 @@
 			'click .immich-thumb': 'onThumbClick',
 			'click .immich-use-btn': 'onUseClick',
 			'click .immich-copy-btn': 'onCopyClick',
+			'click .immich-used-thumb': 'onUsedThumbClick',
 		},
 
 		initialize: function () {
@@ -32,6 +33,7 @@
 			this.lastPersonId = '';
 			this.render();
 			this.loadPeople();
+			this.loadUsedAssets();
 		},
 
 		render: function () {
@@ -43,12 +45,18 @@
 					'<button type="button" class="button immich-copy-btn" disabled>Copy Selected</button>' +
 				'</div>' +
 				'<div class="immich-grid"></div>' +
+				'<div class="immich-used-divider" style="display:none;"><span>Previously added</span></div>' +
+				'<div class="immich-used-grid"></div>' +
 				'<div class="immich-status"><span class="spinner"></span><span class="immich-status-text"></span></div>'
 			);
 
 			var self = this;
 			this.$('.immich-grid').on('scroll', function () {
 				self.onGridScroll();
+			});
+
+			this.$('.immich-used-grid').on('scroll', function () {
+				self.onUsedGridScroll();
 			});
 
 			return this;
@@ -314,7 +322,76 @@
 				if ( library ) {
 					library._requery( true );
 				}
+				this.loadUsedAssets();
 			}
+		},
+
+		loadUsedAssets: function () {
+			this.usedNextPage = null;
+			this.$('.immich-used-grid').empty();
+			this.fetchUsedPage(1);
+		},
+
+		fetchUsedPage: function (page) {
+			var self = this;
+
+			$.ajax({
+				url: config.ajaxUrl,
+				method: 'GET',
+				data: {
+					action: 'immich_used_assets',
+					nonce: config.nonce,
+					page: page,
+				},
+				dataType: 'json',
+				success: function (resp) {
+					if ( ! resp.success ) return;
+
+					var items = resp.data.items || [];
+					self.usedNextPage = resp.data.nextPage || null;
+
+					if ( items.length > 0 || page > 1 ) {
+						self.$('.immich-used-divider').show();
+					}
+
+					items.forEach(function (item) {
+						var $thumb = $(
+							'<div class="immich-thumb immich-used-thumb" data-attachment-id="' + _.escape(item.attachmentId) + '">' +
+								'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.title) + '" />' +
+							'</div>'
+						);
+						self.$('.immich-used-grid').append($thumb);
+					});
+				},
+			});
+		},
+
+		onUsedGridScroll: function () {
+			if ( ! this.usedNextPage ) return;
+
+			var $grid = this.$('.immich-used-grid');
+			var scrollTop = $grid.scrollTop();
+			var scrollHeight = $grid[0].scrollHeight;
+			var clientHeight = $grid[0].clientHeight;
+
+			if ( scrollTop + clientHeight >= scrollHeight - 200 ) {
+				var nextPage = this.usedNextPage;
+				this.usedNextPage = null; // prevent duplicate requests
+				this.fetchUsedPage(nextPage);
+			}
+		},
+
+		onUsedThumbClick: function (e) {
+			var self = this;
+			var $thumb = $(e.currentTarget);
+			var attachmentId = $thumb.data('attachment-id');
+
+			var attachment = wp.media.attachment(attachmentId);
+			attachment.fetch().then(function () {
+				if ( self.controller.state().get('selection') ) {
+					self.controller.state().get('selection').add(attachment);
+				}
+			});
 		},
 	});
 

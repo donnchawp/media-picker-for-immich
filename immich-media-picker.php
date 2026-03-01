@@ -35,6 +35,7 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_thumbnail', array( $this, 'ajax_thumbnail' ) );
 		add_action( 'wp_ajax_immich_import', array( $this, 'ajax_import' ) );
 		add_action( 'wp_ajax_immich_use', array( $this, 'ajax_use' ) );
+		add_action( 'wp_ajax_immich_used_assets', array( $this, 'ajax_used_assets' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
@@ -836,6 +837,46 @@ class Immich_Media_Picker {
 		wp_update_attachment_metadata( $attach_id, $metadata );
 
 		wp_send_json_success( array( 'attachmentId' => $attach_id ) );
+	}
+
+	public function ajax_used_assets(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		$page     = absint( $_GET['page'] ?? 1 ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
+		$page     = max( 1, $page );
+		$per_page = 50;
+
+		$query = new \WP_Query( array(
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'posts_per_page' => $per_page,
+			'paged'          => $page,
+			'meta_key'       => '_immich_asset_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+			'meta_compare'   => 'EXISTS',
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+		) );
+
+		$items = array();
+		foreach ( $query->posts as $post ) {
+			$immich_id = get_post_meta( $post->ID, '_immich_asset_id', true );
+			$items[]   = array(
+				'attachmentId' => $post->ID,
+				'immichId'     => $immich_id,
+				'title'        => $post->post_title,
+				'thumbUrl'     => home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
+			);
+		}
+
+		$has_more = ( $page * $per_page ) < $query->found_posts;
+
+		wp_send_json_success( array(
+			'items'    => $items,
+			'nextPage' => $has_more ? $page + 1 : null,
+			'total'    => $query->found_posts,
+		) );
 	}
 }
 

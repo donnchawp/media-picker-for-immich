@@ -98,3 +98,37 @@
 	display: flex;
 	flex-direction: column;
 }
+
+.immich-used-divider {
+	display: flex;
+	align-items: center;
+	padding: 8px 16px;
+	color: #666;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	border-top: 1px solid #ddd;
+}
+
+.immich-used-divider span {
+	white-space: nowrap;
+}
+
+.immich-used-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 16px;
+	overflow-y: auto;
+	flex: 1;
+	min-height: 0;
+	align-content: flex-start;
+}
+
+.immich-used-thumb {
+	opacity: 0.85;
+}
+
+.immich-used-thumb:hover {
+	opacity: 1;
+}
