@@ -435,10 +435,13 @@
 						self.$('.immich-used-divider').show();
 					}
 
+					var selection = self.controller.state().get('selection');
 					items.forEach(function (item) {
+						var isSelected = selection && !!selection.get(item.attachmentId);
 						var $thumb = $(
-							'<div class="immich-used-thumb" data-attachment-id="' + _.escape(item.attachmentId) + '">' +
+							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '">' +
 								'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.title) + '" />' +
+								'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
 							'</div>'
 						);
 						self.$('.immich-used-grid').append($thumb);
@@ -469,12 +472,21 @@
 			var self = this;
 			var $thumb = $(e.currentTarget);
 			var attachmentId = $thumb.data('attachment-id');
+			var selection = this.controller.state().get('selection');
+
+			if ( ! selection ) return;
+
+			// Toggle off if already selected.
+			if ( selection.get(attachmentId) ) {
+				selection.remove(selection.get(attachmentId));
+				$thumb.removeClass('selected');
+				return;
+			}
 
 			var attachment = wp.media.attachment(attachmentId);
 			attachment.fetch().then(function () {
-				if ( self.controller.state().get('selection') ) {
-					self.controller.state().get('selection').add(attachment);
-				}
+				selection.add(attachment);
+				$thumb.addClass('selected');
 			}, function () {
 				console.warn('[Immich] Attachment ' + attachmentId + ' could not be fetched.');
 			});

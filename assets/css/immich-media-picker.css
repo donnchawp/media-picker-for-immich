@@ -47,7 +47,8 @@
 	display: block;
 }
 
-.immich-thumb .immich-check {
+.immich-thumb .immich-check,
+.immich-used-thumb .immich-check {
 	display: none;
 	position: absolute;
 	top: 4px;
@@ -62,12 +63,18 @@
 	text-align: center;
 }
 
-.immich-thumb.selected {
+.immich-thumb.selected,
+.immich-used-thumb.selected {
 	border-color: #0073aa;
 }
 
-.immich-thumb.selected .immich-check {
+.immich-thumb.selected .immich-check,
+.immich-used-thumb.selected .immich-check {
 	display: block;
+}
+
+.immich-used-thumb.selected {
+	opacity: 1;
 }
 
 .immich-thumb:hover,
