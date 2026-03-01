@@ -862,7 +862,10 @@ class Immich_Media_Picker {
 		$items = array();
 		foreach ( $query->posts as $post ) {
 			$immich_id = get_post_meta( $post->ID, '_immich_asset_id', true );
-			$items[]   = array(
+			if ( ! $immich_id ) {
+				continue;
+			}
+			$items[] = array(
 				'attachmentId' => $post->ID,
 				'immichId'     => $immich_id,
 				'title'        => $post->post_title,

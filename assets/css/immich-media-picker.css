@@ -27,7 +27,8 @@
 	align-content: flex-start;
 }
 
-.immich-thumb {
+.immich-thumb,
+.immich-used-thumb {
 	position: relative;
 	cursor: pointer;
 	border: 3px solid transparent;
@@ -38,7 +39,8 @@
 	flex-shrink: 0;
 }
 
-.immich-thumb img {
+.immich-thumb img,
+.immich-used-thumb img {
 	width: 100%;
 	height: 100%;
 	object-fit: cover;
@@ -68,9 +70,9 @@
 	display: block;
 }
 
-.immich-thumb:hover {
+.immich-thumb:hover,
+.immich-used-thumb:hover {
 	border-color: #0073aa;
-	opacity: 0.9;
 }
 
 .immich-status {

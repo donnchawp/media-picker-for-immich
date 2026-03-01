@@ -327,13 +327,16 @@
 		},
 
 		loadUsedAssets: function () {
+			if ( this.usedLoading ) return;
 			this.usedNextPage = null;
 			this.$('.immich-used-grid').empty();
+			this.$('.immich-used-divider').hide();
 			this.fetchUsedPage(1);
 		},
 
 		fetchUsedPage: function (page) {
 			var self = this;
+			this.usedLoading = true;
 
 			$.ajax({
 				url: config.ajaxUrl,
@@ -345,23 +348,27 @@
 				},
 				dataType: 'json',
 				success: function (resp) {
+					self.usedLoading = false;
 					if ( ! resp.success ) return;
 
 					var items = resp.data.items || [];
 					self.usedNextPage = resp.data.nextPage || null;
 
-					if ( items.length > 0 || page > 1 ) {
+					if ( items.length > 0 ) {
 						self.$('.immich-used-divider').show();
 					}
 
 					items.forEach(function (item) {
 						var $thumb = $(
-							'<div class="immich-thumb immich-used-thumb" data-attachment-id="' + _.escape(item.attachmentId) + '">' +
+							'<div class="immich-used-thumb" data-attachment-id="' + _.escape(item.attachmentId) + '">' +
 								'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.title) + '" />' +
 							'</div>'
 						);
 						self.$('.immich-used-grid').append($thumb);
 					});
+				},
+				error: function () {
+					self.usedLoading = false;
 				},
 			});
 		},
@@ -391,6 +398,8 @@
 				if ( self.controller.state().get('selection') ) {
 					self.controller.state().get('selection').add(attachment);
 				}
+			}, function () {
+				console.warn('[Immich] Attachment ' + attachmentId + ' could not be fetched.');
 			});
 		},
 	});
