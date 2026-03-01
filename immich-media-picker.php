@@ -269,6 +269,7 @@ class Immich_Media_Picker {
 				'header'        => implode( "\r\n", $headers ),
 				'ignore_errors' => true,
 				'timeout'       => 60,
+				'max_redirects' => 0,
 			),
 		) );
 
@@ -282,18 +283,47 @@ class Immich_Media_Picker {
 		$meta             = stream_get_meta_data( $remote );
 		$response_headers = $meta['wrapper_data'] ?? array();
 		$status_code      = 200;
+		$content_type     = '';
 
 		foreach ( $response_headers as $header_line ) {
 			if ( preg_match( '/^HTTP\/[\d.]+ (\d+)/', $header_line, $m ) ) {
 				$status_code = (int) $m[1];
 			} elseif ( preg_match( '/^(Content-Type|Content-Length|Content-Range|Accept-Ranges):\s*(.+)/i', $header_line, $m ) ) {
-				header( $m[1] . ': ' . trim( $m[2] ) );
+				if ( 'content-type' === strtolower( $m[1] ) ) {
+					$content_type = strtok( trim( $m[2] ), ';' );
+				} else {
+					header( $m[1] . ': ' . trim( $m[2] ) );
+				}
 			}
 		}
 
+		// Validate Content-Type and status before streaming.
+		$allowed_video_types = array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' );
+		if ( ! in_array( $content_type, $allowed_video_types, true ) ) {
+			fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			status_header( 502 );
+			exit( 'Unexpected content type.' );
+		}
+
+		if ( $status_code < 200 || ( $status_code >= 300 && 206 !== $status_code ) ) {
+			fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			status_header( $status_code >= 500 ? 502 : $status_code );
+			exit( 'Asset not available.' );
+		}
+
+		header( 'Content-Type: ' . $content_type );
 		status_header( $status_code );
-		header( 'Cache-Control: public, max-age=31536000' );
 		header( 'X-Content-Type-Options: nosniff' );
+		if ( 206 === $status_code ) {
+			header( 'Cache-Control: no-store' );
+		} else {
+			header( 'Cache-Control: public, max-age=31536000' );
+		}
+
+		// Flush any output buffers to enable true streaming.
+		while ( ob_get_level() > 0 ) {
+			ob_end_clean();
+		}
 
 		// Stream in 8KB chunks.
 		while ( ! feof( $remote ) ) {
