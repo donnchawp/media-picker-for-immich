@@ -713,13 +713,33 @@ class Immich_Media_Picker {
 			return;
 		}
 
-		$filename   = sanitize_file_name( $info['originalFileName'] ?? $id . '.jpg' );
-		$asset_type = $info['type'] ?? 'IMAGE'; // IMAGE or VIDEO
-		$mime       = $info['originalMimeType'] ?? ( 'VIDEO' === $asset_type ? 'video/mp4' : 'image/jpeg' );
-		$width      = (int) ( $info['exifInfo']['exifImageWidth'] ?? 0 );
-		$height     = (int) ( $info['exifInfo']['exifImageHeight'] ?? 0 );
+		$filename      = sanitize_file_name( $info['originalFileName'] ?? $id . '.jpg' );
+		$raw_type      = $info['type'] ?? 'IMAGE';
+		$asset_type    = in_array( $raw_type, array( 'IMAGE', 'VIDEO' ), true ) ? $raw_type : 'IMAGE';
+		$allowed_mimes = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff', 'video/mp4', 'video/quicktime' );
+		$mime          = $info['originalMimeType'] ?? '';
+		if ( ! in_array( $mime, $allowed_mimes, true ) ) {
+			$mime = 'VIDEO' === $asset_type ? 'video/mp4' : 'image/jpeg';
+		}
+		$width  = (int) ( $info['exifInfo']['exifImageWidth'] ?? 0 );
+		$height = (int) ( $info['exifInfo']['exifImageHeight'] ?? 0 );
+
+		// Return existing attachment if this asset was already used.
+		$existing = get_posts( array(
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'posts_per_page' => 1,
+			'meta_key'       => '_immich_asset_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+			'meta_value'     => $id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
+			'fields'         => 'ids',
+		) );
+		if ( ! empty( $existing ) ) {
+			wp_send_json_success( array( 'attachmentId' => $existing[0] ) );
+			return;
+		}
 
 		$attachment = array(
+			'post_author'    => get_current_user_id(),
 			'post_title'     => pathinfo( $filename, PATHINFO_FILENAME ),
 			'post_mime_type' => $mime,
 			'post_status'    => 'inherit',
@@ -734,33 +754,34 @@ class Immich_Media_Picker {
 		update_post_meta( $attach_id, '_immich_asset_id', $id );
 		update_post_meta( $attach_id, '_immich_asset_type', $asset_type );
 
-		if ( 'IMAGE' === $asset_type && $width > 0 && $height > 0 ) {
-			wp_update_attachment_metadata( $attach_id, array(
-				'width'  => $width,
-				'height' => $height,
-				'file'   => 'immich-proxy/' . $id,
-				'sizes'  => array(
-					'thumbnail' => array(
-						'width'     => 250,
-						'height'    => 250,
-						'file'      => $id,
-						'mime-type' => $mime,
-					),
-					'medium' => array(
-						'width'     => 600,
-						'height'    => 600,
-						'file'      => $id,
-						'mime-type' => $mime,
-					),
-					'large' => array(
-						'width'     => 1024,
-						'height'    => 1024,
-						'file'      => $id,
-						'mime-type' => $mime,
-					),
-				),
-			) );
+		$metadata = array( 'file' => 'immich-proxy/' . $id );
+		if ( $width > 0 && $height > 0 ) {
+			$metadata['width']  = $width;
+			$metadata['height'] = $height;
 		}
+		if ( 'IMAGE' === $asset_type && $width > 0 && $height > 0 ) {
+			$metadata['sizes'] = array(
+				'thumbnail' => array(
+					'width'     => min( $width, 250 ),
+					'height'    => (int) round( $height * min( $width, 250 ) / max( $width, 1 ) ),
+					'file'      => $id,
+					'mime-type' => $mime,
+				),
+				'medium' => array(
+					'width'     => min( $width, 600 ),
+					'height'    => (int) round( $height * min( $width, 600 ) / max( $width, 1 ) ),
+					'file'      => $id,
+					'mime-type' => $mime,
+				),
+				'large' => array(
+					'width'     => min( $width, 1024 ),
+					'height'    => (int) round( $height * min( $width, 1024 ) / max( $width, 1 ) ),
+					'file'      => $id,
+					'mime-type' => $mime,
+				),
+			);
+		}
+		wp_update_attachment_metadata( $attach_id, $metadata );
 
 		wp_send_json_success( array( 'attachmentId' => $attach_id ) );
 	}
