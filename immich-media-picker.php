@@ -194,7 +194,7 @@ class Immich_Media_Picker {
 
 		// Stream originals via temp file to avoid buffering large files in memory.
 		if ( 'original' === $type ) {
-			$tmp_file = wp_tempnam( $id );
+			$tmp_file = tempnam( get_temp_dir(), 'immich_' );
 			$response = wp_remote_get( $api_url, array(
 				'headers'  => array( 'x-api-key' => $api_key ),
 				'timeout'  => $timeout,
@@ -203,7 +203,7 @@ class Immich_Media_Picker {
 			) );
 
 			if ( is_wp_error( $response ) ) {
-				wp_delete_file( $tmp_file );
+				@unlink( $tmp_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
 				status_header( 502 );
 				exit( 'Upstream error.' );
 			}
