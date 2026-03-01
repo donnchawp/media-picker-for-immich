@@ -34,6 +34,7 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_people', array( $this, 'ajax_people' ) );
 		add_action( 'wp_ajax_immich_thumbnail', array( $this, 'ajax_thumbnail' ) );
 		add_action( 'wp_ajax_immich_import', array( $this, 'ajax_import' ) );
+		add_action( 'wp_ajax_immich_use', array( $this, 'ajax_use' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
 	}
@@ -691,6 +692,75 @@ class Immich_Media_Picker {
 		require_once ABSPATH . 'wp-admin/includes/image.php';
 		$metadata = wp_generate_attachment_metadata( $attach_id, $dest_path );
 		wp_update_attachment_metadata( $attach_id, $metadata );
+
+		wp_send_json_success( array( 'attachmentId' => $attach_id ) );
+	}
+
+	public function ajax_use(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		$id = sanitize_text_field( wp_unslash( $_POST['id'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
+		if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id ) ) {
+			wp_send_json_error( 'Invalid asset ID.' );
+			return;
+		}
+
+		$info = $this->api_request( '/api/assets/' . $id );
+		if ( is_wp_error( $info ) ) {
+			wp_send_json_error( $info->get_error_message() );
+			return;
+		}
+
+		$filename   = sanitize_file_name( $info['originalFileName'] ?? $id . '.jpg' );
+		$asset_type = $info['type'] ?? 'IMAGE'; // IMAGE or VIDEO
+		$mime       = $info['originalMimeType'] ?? ( 'VIDEO' === $asset_type ? 'video/mp4' : 'image/jpeg' );
+		$width      = (int) ( $info['exifInfo']['exifImageWidth'] ?? 0 );
+		$height     = (int) ( $info['exifInfo']['exifImageHeight'] ?? 0 );
+
+		$attachment = array(
+			'post_title'     => pathinfo( $filename, PATHINFO_FILENAME ),
+			'post_mime_type' => $mime,
+			'post_status'    => 'inherit',
+		);
+
+		$attach_id = wp_insert_attachment( $attachment );
+		if ( is_wp_error( $attach_id ) ) {
+			wp_send_json_error( 'Failed to create attachment.' );
+			return;
+		}
+
+		update_post_meta( $attach_id, '_immich_asset_id', $id );
+		update_post_meta( $attach_id, '_immich_asset_type', $asset_type );
+
+		if ( 'IMAGE' === $asset_type && $width > 0 && $height > 0 ) {
+			wp_update_attachment_metadata( $attach_id, array(
+				'width'  => $width,
+				'height' => $height,
+				'file'   => 'immich-proxy/' . $id,
+				'sizes'  => array(
+					'thumbnail' => array(
+						'width'     => 250,
+						'height'    => 250,
+						'file'      => $id,
+						'mime-type' => $mime,
+					),
+					'medium' => array(
+						'width'     => 600,
+						'height'    => 600,
+						'file'      => $id,
+						'mime-type' => $mime,
+					),
+					'large' => array(
+						'width'     => 1024,
+						'height'    => 1024,
+						'file'      => $id,
+						'mime-type' => $mime,
+					),
+				),
+			) );
+		}
 
 		wp_send_json_success( array( 'attachmentId' => $attach_id ) );
 	}
