@@ -17,6 +17,7 @@
 		events: {
 			'input .immich-search-input': 'onSearchInput',
 			'change .immich-people-select': 'onPeopleChange',
+			'click .immich-browse-btn': 'onBrowseClick',
 			'click .immich-thumb': 'onThumbClick',
 			'click .immich-use-btn': 'onUseClick',
 			'click .immich-copy-btn': 'onCopyClick',
@@ -31,9 +32,12 @@
 			this.loading = false;
 			this.lastQuery = '';
 			this.lastPersonId = '';
+			this.browsing = false;
+			this.browseNextPage = null;
 			this.render();
 			this.loadPeople();
 			this.loadUsedAssets();
+			this.doBrowse();
 		},
 
 		render: function () {
@@ -41,6 +45,7 @@
 				'<div class="immich-toolbar">' +
 					'<input type="search" class="immich-search-input" placeholder="Search photos..." />' +
 					'<select class="immich-people-select"><option value="">All people</option></select>' +
+					'<button type="button" class="button immich-browse-btn">Browse</button>' +
 					'<button type="button" class="button button-primary immich-use-btn" disabled>Use Selected</button>' +
 					'<button type="button" class="button immich-copy-btn" disabled>Copy Selected</button>' +
 				'</div>' +
@@ -84,6 +89,69 @@
 			});
 		},
 
+		onBrowseClick: function () {
+			this.$('.immich-search-input').val('');
+			this.$('.immich-people-select').val('');
+			this.lastQuery = '';
+			this.lastPersonId = '';
+			this.doBrowse();
+		},
+
+		doBrowse: function () {
+			this.browsing = true;
+			this.browseNextPage = null;
+			this.selected = {};
+			this.updateButtons();
+			this.$('.immich-grid').empty();
+			this.fetchBrowsePage(1);
+		},
+
+		fetchBrowsePage: function (page) {
+			var self = this;
+			this.loading = true;
+			this.$('.spinner').addClass('is-active');
+			if ( page === 1 ) {
+				this.$('.immich-status-text').text('Loading latest photos...');
+			} else {
+				this.$('.immich-status-text').text('Loading more...');
+			}
+
+			$.ajax({
+				url: config.ajaxUrl,
+				method: 'GET',
+				data: {
+					action: 'immich_browse',
+					nonce: config.nonce,
+					page: page,
+				},
+				dataType: 'json',
+				success: function (resp) {
+					self.$('.spinner').removeClass('is-active');
+					self.$('.immich-status-text').text('');
+					self.loading = false;
+
+					if ( ! resp.success ) {
+						self.$('.immich-status-text').text('Failed to load photos.');
+						return;
+					}
+
+					var items = resp.data.items || [];
+					self.browseNextPage = resp.data.nextPage || null;
+
+					if ( page === 1 ) {
+						self.renderGrid(items);
+					} else {
+						self.appendToGrid(items);
+					}
+				},
+				error: function () {
+					self.$('.spinner').removeClass('is-active');
+					self.$('.immich-status-text').text('Request failed.');
+					self.loading = false;
+				},
+			});
+		},
+
 		onSearchInput: function () {
 			var self = this;
 			clearTimeout(this.searchTimer);
@@ -97,7 +165,7 @@
 		},
 
 		onGridScroll: function () {
-			if ( this.loading || ! this.nextPage ) {
+			if ( this.loading ) {
 				return;
 			}
 
@@ -106,7 +174,15 @@
 			var scrollHeight = $grid[0].scrollHeight;
 			var clientHeight = $grid[0].clientHeight;
 
-			if ( scrollTop + clientHeight >= scrollHeight - 200 ) {
+			if ( scrollTop + clientHeight < scrollHeight - 200 ) {
+				return;
+			}
+
+			if ( this.browsing && this.browseNextPage ) {
+				var nextPage = this.browseNextPage;
+				this.browseNextPage = null;
+				this.fetchBrowsePage(nextPage);
+			} else if ( ! this.browsing && this.nextPage ) {
 				this.loadMore();
 			}
 		},
@@ -116,13 +192,11 @@
 			var personId = this.$('.immich-people-select').val();
 
 			if ( ! query && ! personId ) {
-				this.$('.immich-grid').empty();
-				this.nextPage = null;
-				this.lastQuery = '';
-				this.lastPersonId = '';
+				this.doBrowse();
 				return;
 			}
 
+			this.browsing = false;
 			this.lastQuery = query;
 			this.lastPersonId = personId;
 			this.currentPage = 1;

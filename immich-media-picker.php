@@ -30,6 +30,7 @@ class Immich_Media_Picker {
 		add_action( 'edit_user_profile', array( $this, 'render_user_api_key_field' ) );
 		add_action( 'personal_options_update', array( $this, 'save_user_api_key' ) );
 		add_action( 'edit_user_profile_update', array( $this, 'save_user_api_key' ) );
+		add_action( 'wp_ajax_immich_browse', array( $this, 'ajax_browse' ) );
 		add_action( 'wp_ajax_immich_search', array( $this, 'ajax_search' ) );
 		add_action( 'wp_ajax_immich_people', array( $this, 'ajax_people' ) );
 		add_action( 'wp_ajax_immich_thumbnail', array( $this, 'ajax_thumbnail' ) );
@@ -543,6 +544,42 @@ class Immich_Media_Picker {
 			$h,
 			true,
 		);
+	}
+
+	public function ajax_browse(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		$page = absint( $_GET['page'] ?? 1 ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
+		$page = max( 1, $page );
+
+		$response = $this->api_request( '/api/search/metadata', 'POST', array(
+			'size'  => 50,
+			'page'  => $page,
+			'order' => 'desc',
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message() );
+			return;
+		}
+
+		$items     = $response['assets']['items'] ?? array();
+		$next_page = $response['assets']['nextPage'] ?? null;
+		$result    = array();
+		foreach ( $items as $asset ) {
+			if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $asset['id'] ?? '' ) ) {
+				continue;
+			}
+			$result[] = array(
+				'id'       => $asset['id'],
+				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . rawurlencode( $asset['id'] ) . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
+				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
+			);
+		}
+
+		wp_send_json_success( array( 'items' => $result, 'nextPage' => $next_page ) );
 	}
 
 	public function ajax_search(): void {
