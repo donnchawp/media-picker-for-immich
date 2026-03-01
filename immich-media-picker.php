@@ -524,17 +524,21 @@ class Immich_Media_Picker {
 			return $downsize;
 		}
 
+		// Skip videos — let WordPress handle them as video type so Gutenberg
+		// creates a Video block instead of an Image block.
+		$asset_type = get_post_meta( $attachment_id, '_immich_asset_type', true );
+		if ( 'VIDEO' === $asset_type ) {
+			return $downsize;
+		}
+
 		$meta      = wp_get_attachment_metadata( $attachment_id );
 		$width     = $meta['width'] ?? 0;
 		$height    = $meta['height'] ?? 0;
 		$size_slug = is_array( $size ) ? '' : $size;
 
 		if ( 'full' === $size_slug ) {
-			// For videos, use thumbnail even at full size to avoid streaming video into an <img> tag.
-			$asset_type = get_post_meta( $attachment_id, '_immich_asset_type', true );
-			$proxy_type = 'VIDEO' === $asset_type ? 'thumbnail' : 'original';
 			return array(
-				home_url( '/?immich_media_proxy=' . $proxy_type . '&id=' . rawurlencode( $immich_id ) ),
+				home_url( '/?immich_media_proxy=original&id=' . rawurlencode( $immich_id ) ),
 				$width,
 				$height,
 				false,
