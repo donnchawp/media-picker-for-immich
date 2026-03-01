@@ -290,11 +290,14 @@
 								if ( self.controller.state().get('selection') ) {
 									self.controller.state().get('selection').add(attachment);
 								}
+								next(index + 1);
+							}, function () {
+								next(index + 1);
 							});
 						} else {
 							failed++;
+							next(index + 1);
 						}
-						next(index + 1);
 					},
 					error: function () {
 						failed++;

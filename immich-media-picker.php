@@ -151,6 +151,11 @@ class Immich_Media_Picker {
 		return $settings['api_url'] ?? self::DEFAULT_API_URL;
 	}
 
+	/**
+	 * Public proxy endpoint — intentionally unauthenticated so proxied images
+	 * work in published posts for anonymous visitors. The Immich API key is
+	 * never exposed; it stays server-side. UUIDs are validated but not secret.
+	 */
 	public function handle_proxy_request(): void {
 		if ( ! isset( $_GET['immich_media_proxy'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- public proxy endpoint, no auth required
 			return;
@@ -301,18 +306,18 @@ class Immich_Media_Picker {
 			}
 		}
 
-		// Validate Content-Type and status before streaming.
+		// Validate status before content-type (error responses may have non-video content types).
+		if ( $status_code < 200 || ( $status_code >= 300 && 206 !== $status_code ) ) {
+			fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			status_header( $status_code >= 500 ? 502 : $status_code );
+			exit( 'Asset not available.' );
+		}
+
 		$allowed_video_types = array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' );
 		if ( ! in_array( $content_type, $allowed_video_types, true ) ) {
 			fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 			status_header( 502 );
 			exit( 'Unexpected content type.' );
-		}
-
-		if ( $status_code < 200 || ( $status_code >= 300 && 206 !== $status_code ) ) {
-			fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-			status_header( $status_code >= 500 ? 502 : $status_code );
-			exit( 'Asset not available.' );
 		}
 
 		header( 'Content-Type: ' . $content_type );
@@ -514,6 +519,16 @@ class Immich_Media_Picker {
 				$width,
 				$height,
 				false,
+			);
+		}
+
+		// For array sizes (e.g. [100, 100] from srcset), use the requested dimensions.
+		if ( is_array( $size ) ) {
+			return array(
+				home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
+				(int) ( $size[0] ?? 250 ),
+				(int) ( $size[1] ?? 250 ),
+				true,
 			);
 		}
 
@@ -791,11 +806,13 @@ class Immich_Media_Picker {
 			return;
 		}
 
+		$proxy_type = 'VIDEO' === $asset_type ? 'video' : 'original';
 		$attachment = array(
 			'post_author'    => get_current_user_id(),
 			'post_title'     => pathinfo( $filename, PATHINFO_FILENAME ),
 			'post_mime_type' => $mime,
 			'post_status'    => 'inherit',
+			'guid'           => home_url( '/?immich_media_proxy=' . $proxy_type . '&id=' . rawurlencode( $id ) ),
 		);
 
 		$attach_id = wp_insert_attachment( $attachment );
