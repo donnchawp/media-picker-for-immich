@@ -487,10 +487,10 @@ class Immich_Media_Picker {
 
 		$asset_type = get_post_meta( $attachment_id, '_immich_asset_type', true );
 		if ( 'VIDEO' === $asset_type ) {
-			return home_url( '/?immich_media_proxy=video&id=' . $immich_id );
+			return home_url( '/?immich_media_proxy=video&id=' . rawurlencode( $immich_id ) );
 		}
 
-		return home_url( '/?immich_media_proxy=original&id=' . $immich_id );
+		return home_url( '/?immich_media_proxy=original&id=' . rawurlencode( $immich_id ) );
 	}
 
 	public function filter_image_downsize( $downsize, int $attachment_id, $size ) {
@@ -499,24 +499,32 @@ class Immich_Media_Picker {
 			return $downsize;
 		}
 
-		$meta   = wp_get_attachment_metadata( $attachment_id );
-		$width  = $meta['width'] ?? 0;
-		$height = $meta['height'] ?? 0;
+		$meta      = wp_get_attachment_metadata( $attachment_id );
+		$width     = $meta['width'] ?? 0;
+		$height    = $meta['height'] ?? 0;
+		$size_slug = is_array( $size ) ? '' : $size;
 
-		if ( 'full' === $size ) {
+		if ( 'full' === $size_slug ) {
+			// For videos, use thumbnail even at full size to avoid streaming video into an <img> tag.
+			$asset_type = get_post_meta( $attachment_id, '_immich_asset_type', true );
+			$proxy_type = 'VIDEO' === $asset_type ? 'thumbnail' : 'original';
 			return array(
-				home_url( '/?immich_media_proxy=original&id=' . $immich_id ),
+				home_url( '/?immich_media_proxy=' . $proxy_type . '&id=' . rawurlencode( $immich_id ) ),
 				$width,
 				$height,
 				false,
 			);
 		}
 
-		// All non-full sizes use the Immich thumbnail endpoint.
+		// Return accurate dimensions from stored metadata when available.
+		$size_data = $meta['sizes'][ $size_slug ] ?? null;
+		$w         = $size_data['width'] ?? 250;
+		$h         = $size_data['height'] ?? 250;
+
 		return array(
-			home_url( '/?immich_media_proxy=thumbnail&id=' . $immich_id ),
-			250,
-			250,
+			home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
+			$w,
+			$h,
 			true,
 		);
 	}
