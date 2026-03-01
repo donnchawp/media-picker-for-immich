@@ -176,6 +176,46 @@ class Immich_Media_Picker {
 			: $base . '/api/assets/' . $id . '/original';
 		$timeout = 'thumbnail' === $type ? 10 : 30;
 
+		// Stream originals via temp file to avoid buffering large files in memory.
+		if ( 'original' === $type ) {
+			$tmp_file = wp_tempnam( $id );
+			$response = wp_remote_get( $api_url, array(
+				'headers'  => array( 'x-api-key' => $api_key ),
+				'timeout'  => $timeout,
+				'stream'   => true,
+				'filename' => $tmp_file,
+			) );
+
+			if ( is_wp_error( $response ) ) {
+				wp_delete_file( $tmp_file );
+				status_header( 502 );
+				exit( 'Upstream error.' );
+			}
+
+			$code = wp_remote_retrieve_response_code( $response );
+			if ( $code < 200 || $code >= 300 ) {
+				wp_delete_file( $tmp_file );
+				status_header( (int) $code );
+				exit( 'Asset not available.' );
+			}
+
+			$content_type  = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
+			$allowed_types = array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif', 'image/tiff', 'video/mp4', 'video/quicktime' );
+			if ( ! in_array( $content_type, $allowed_types, true ) ) {
+				wp_delete_file( $tmp_file );
+				status_header( 502 );
+				exit( 'Unexpected content type.' );
+			}
+
+			header( 'Content-Type: ' . $content_type );
+			header( 'Content-Length: ' . filesize( $tmp_file ) );
+			header( 'Cache-Control: public, max-age=31536000' );
+			header( 'X-Content-Type-Options: nosniff' );
+			readfile( $tmp_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile
+			wp_delete_file( $tmp_file );
+			exit;
+		}
+
 		$response = wp_remote_get( $api_url, array(
 			'headers' => array( 'x-api-key' => $api_key ),
 			'timeout' => $timeout,
@@ -192,11 +232,16 @@ class Immich_Media_Picker {
 			exit( 'Asset not available.' );
 		}
 
-		$content_type = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
-		$body         = wp_remote_retrieve_body( $response );
+		$content_type  = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
+		$allowed_types = array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' );
+		if ( ! in_array( $content_type, $allowed_types, true ) ) {
+			status_header( 502 );
+			exit( 'Unexpected content type.' );
+		}
+		$body = wp_remote_retrieve_body( $response );
 
 		header( 'Content-Type: ' . $content_type );
-		header( 'Content-Length: ' . strlen( $body ) );
+		header( 'Content-Length: ' . mb_strlen( $body, '8bit' ) );
 		header( 'Cache-Control: public, max-age=31536000' );
 		header( 'X-Content-Type-Options: nosniff' );
 		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
