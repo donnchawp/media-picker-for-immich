@@ -37,6 +37,8 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_use', array( $this, 'ajax_use' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
+		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
+		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
 	}
 
 	public function add_settings_page(): void {
@@ -475,6 +477,48 @@ class Immich_Media_Picker {
 		}
 		$key = sanitize_text_field( wp_unslash( $_POST['immich_api_key'] ?? '' ) );
 		update_user_meta( $user_id, 'immich_api_key', $key );
+	}
+
+	public function filter_attachment_url( string $url, int $attachment_id ): string {
+		$immich_id = get_post_meta( $attachment_id, '_immich_asset_id', true );
+		if ( ! $immich_id ) {
+			return $url;
+		}
+
+		$asset_type = get_post_meta( $attachment_id, '_immich_asset_type', true );
+		if ( 'VIDEO' === $asset_type ) {
+			return home_url( '/?immich_media_proxy=video&id=' . $immich_id );
+		}
+
+		return home_url( '/?immich_media_proxy=original&id=' . $immich_id );
+	}
+
+	public function filter_image_downsize( $downsize, int $attachment_id, $size ) {
+		$immich_id = get_post_meta( $attachment_id, '_immich_asset_id', true );
+		if ( ! $immich_id ) {
+			return $downsize;
+		}
+
+		$meta   = wp_get_attachment_metadata( $attachment_id );
+		$width  = $meta['width'] ?? 0;
+		$height = $meta['height'] ?? 0;
+
+		if ( 'full' === $size ) {
+			return array(
+				home_url( '/?immich_media_proxy=original&id=' . $immich_id ),
+				$width,
+				$height,
+				false,
+			);
+		}
+
+		// All non-full sizes use the Immich thumbnail endpoint.
+		return array(
+			home_url( '/?immich_media_proxy=thumbnail&id=' . $immich_id ),
+			250,
+			250,
+			true,
+		);
 	}
 
 	public function ajax_search(): void {
