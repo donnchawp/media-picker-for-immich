@@ -412,7 +412,7 @@ class Immich_Media_Picker {
 			'immich-media-picker',
 			IMMICH_MEDIA_PICKER_URL . 'assets/js/immich-media-picker.js',
 			array( 'jquery', 'media-views' ),
-			IMMICH_MEDIA_PICKER_VERSION,
+			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/js/immich-media-picker.js' ),
 			true
 		);
 
