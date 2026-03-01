@@ -38,9 +38,11 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_use', array( $this, 'ajax_use' ) );
 		add_action( 'wp_ajax_immich_used_assets', array( $this, 'ajax_used_assets' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
+		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
+		add_filter( 'the_content', array( $this, 'maybe_enqueue_lightbox' ) );
 	}
 
 	public function add_settings_page(): void {
@@ -429,6 +431,44 @@ class Immich_Media_Picker {
 		);
 	}
 
+	public function register_frontend_assets(): void {
+		wp_register_style(
+			'immich-lightbox',
+			IMMICH_MEDIA_PICKER_URL . 'assets/css/immich-lightbox.css',
+			array(),
+			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/css/immich-lightbox.css' )
+		);
+
+		wp_register_script(
+			'immich-lightbox',
+			IMMICH_MEDIA_PICKER_URL . 'assets/js/immich-lightbox.js',
+			array(),
+			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/js/immich-lightbox.js' ),
+			true
+		);
+	}
+
+	public function maybe_enqueue_lightbox( string $content ): string {
+		if ( ! str_contains( $content, 'immich_media_proxy=original' ) ) {
+			return $content;
+		}
+
+		// Add data-immich-lightbox to <a> tags that link to an Immich original
+		// AND directly contain an <img>. Links wrapping video or other content
+		// are left alone.
+		$content = preg_replace(
+			'/(<a\b[^>]*href="[^"]*immich_media_proxy=original[^"]*"[^>]*)(>)\s*(<img\b)/si',
+			'$1 data-immich-lightbox$2$3',
+			$content
+		);
+
+		if ( str_contains( $content, 'data-immich-lightbox' ) ) {
+			wp_enqueue_style( 'immich-lightbox' );
+			wp_enqueue_script( 'immich-lightbox' );
+		}
+
+		return $content;
+	}
 
 	public function render_settings_page(): void {
 		if ( ! current_user_can( 'manage_options' ) ) {
