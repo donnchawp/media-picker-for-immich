@@ -153,7 +153,7 @@ class Immich_Media_Picker {
 		}
 
 		$type = sanitize_key( $_GET['immich_media_proxy'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		if ( ! in_array( $type, array( 'thumbnail', 'original' ), true ) ) {
+		if ( ! in_array( $type, array( 'thumbnail', 'original', 'video' ), true ) ) {
 			status_header( 400 );
 			exit( 'Invalid type.' );
 		}
@@ -168,6 +168,12 @@ class Immich_Media_Picker {
 		if ( '' === $api_key ) {
 			status_header( 500 );
 			exit( 'No API key configured.' );
+		}
+
+		if ( 'video' === $type ) {
+			$base = rtrim( $this->get_api_url(), '/' );
+			$this->stream_video( $base . '/api/assets/' . $id . '/video/playback', $api_key );
+			return;
 		}
 
 		$base    = rtrim( $this->get_api_url(), '/' );
@@ -245,6 +251,57 @@ class Immich_Media_Picker {
 		header( 'Cache-Control: public, max-age=31536000' );
 		header( 'X-Content-Type-Options: nosniff' );
 		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
+		exit;
+	}
+
+	private function stream_video( string $url, string $api_key ): void {
+		$headers = array( 'x-api-key: ' . $api_key );
+
+		// Forward Range header for seeking support.
+		$range = isset( $_SERVER['HTTP_RANGE'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_RANGE'] ) ) : '';
+		if ( '' !== $range ) {
+			$headers[] = 'Range: ' . $range;
+		}
+
+		$context = stream_context_create( array(
+			'http' => array(
+				'method'        => 'GET',
+				'header'        => implode( "\r\n", $headers ),
+				'ignore_errors' => true,
+				'timeout'       => 60,
+			),
+		) );
+
+		$remote = @fopen( $url, 'rb', false, $context ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+		if ( ! $remote ) {
+			status_header( 502 );
+			exit( 'Failed to connect to Immich.' );
+		}
+
+		// Parse response headers from stream metadata.
+		$meta             = stream_get_meta_data( $remote );
+		$response_headers = $meta['wrapper_data'] ?? array();
+		$status_code      = 200;
+
+		foreach ( $response_headers as $header_line ) {
+			if ( preg_match( '/^HTTP\/[\d.]+ (\d+)/', $header_line, $m ) ) {
+				$status_code = (int) $m[1];
+			} elseif ( preg_match( '/^(Content-Type|Content-Length|Content-Range|Accept-Ranges):\s*(.+)/i', $header_line, $m ) ) {
+				header( $m[1] . ': ' . trim( $m[2] ) );
+			}
+		}
+
+		status_header( $status_code );
+		header( 'Cache-Control: public, max-age=31536000' );
+		header( 'X-Content-Type-Options: nosniff' );
+
+		// Stream in 8KB chunks.
+		while ( ! feof( $remote ) ) {
+			echo fread( $remote, 8192 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped, WordPress.WP.AlternativeFunctions.file_system_operations_fread
+			flush();
+		}
+
+		fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		exit;
 	}
 
