@@ -18,7 +18,8 @@
 			'input .immich-search-input': 'onSearchInput',
 			'change .immich-people-select': 'onPeopleChange',
 			'click .immich-thumb': 'onThumbClick',
-			'click .immich-import-btn': 'onImportClick',
+				'click .immich-use-btn': 'onUseClick',
+			'click .immich-copy-btn': 'onCopyClick',
 		},
 
 		initialize: function () {
@@ -38,7 +39,8 @@
 				'<div class="immich-toolbar">' +
 					'<input type="search" class="immich-search-input" placeholder="Search photos..." />' +
 					'<select class="immich-people-select"><option value="">All people</option></select>' +
-					'<button type="button" class="button button-primary immich-import-btn" disabled>Import Selected</button>' +
+						'<button type="button" class="button button-primary immich-use-btn" disabled>Use Selected</button>' +
+					'<button type="button" class="button immich-copy-btn" disabled>Copy Selected</button>' +
 				'</div>' +
 				'<div class="immich-grid"></div>' +
 				'<div class="immich-status"><span class="spinner"></span><span class="immich-status-text"></span></div>'
@@ -118,7 +120,7 @@
 			this.currentPage = 1;
 			this.nextPage = null;
 			this.selected = {};
-			this.updateImportButton();
+			this.updateButtons();
 			this.$('.immich-grid').empty();
 
 			this.fetchPage(1, false);
@@ -188,7 +190,7 @@
 		renderGrid: function (items) {
 			var $grid = this.$('.immich-grid').empty();
 			this.selected = {};
-			this.updateImportButton();
+			this.updateButtons();
 
 			if ( ! items.length ) {
 				$grid.html('<p class="immich-no-results">No results found.</p>');
@@ -224,36 +226,95 @@
 				$thumb.addClass('selected');
 			}
 
-			this.updateImportButton();
+			this.updateButtons();
 		},
 
-		updateImportButton: function () {
+		updateButtons: function () {
 			var count = Object.keys(this.selected).length;
-			var $btn = this.$('.immich-import-btn');
-			$btn.prop('disabled', count === 0);
-			$btn.text(count > 1 ? 'Import ' + count + ' Selected' : 'Import Selected');
+			this.$('.immich-use-btn').prop('disabled', count === 0)
+				.text(count > 1 ? 'Use ' + count + ' Selected' : 'Use Selected');
+			this.$('.immich-copy-btn').prop('disabled', count === 0)
+				.text(count > 1 ? 'Copy ' + count + ' Selected' : 'Copy Selected');
 		},
 
-		onImportClick: function () {
+		onUseClick: function () {
 			var self = this;
 			var ids = Object.keys(this.selected);
 			if ( ! ids.length ) return;
 
-			var $btn = this.$('.immich-import-btn');
-			$btn.prop('disabled', true).text('Importing...');
+			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', true);
+			var $btn = this.$('.immich-use-btn');
+			$btn.text('Adding...');
 
 			var succeeded = 0;
 			var failed = 0;
 			var completed = 0;
 			var total = ids.length;
 
-			function importNext(index) {
+			function useNext(index) {
 				if ( index >= ids.length ) {
-					self.checkComplete(succeeded, failed, completed, total, $btn);
+					self.onActionComplete(succeeded, failed, total);
 					return;
 				}
 
-				$btn.text('Importing ' + (index + 1) + ' of ' + total + '...');
+				$btn.text('Adding ' + (index + 1) + ' of ' + total + '...');
+
+				$.ajax({
+					url: config.ajaxUrl,
+					method: 'POST',
+					data: {
+						action: 'immich_use',
+						nonce: config.nonce,
+						id: ids[index],
+					},
+					dataType: 'json',
+					success: function (resp) {
+						completed++;
+						if ( resp.success && resp.data && resp.data.attachmentId ) {
+							succeeded++;
+							var attachment = wp.media.attachment(resp.data.attachmentId);
+							attachment.fetch().then(function () {
+								if ( self.controller.state().get('selection') ) {
+									self.controller.state().get('selection').add(attachment);
+								}
+							});
+						} else {
+							failed++;
+						}
+						useNext(index + 1);
+					},
+					error: function () {
+						completed++;
+						failed++;
+						useNext(index + 1);
+					},
+				});
+			}
+
+			useNext(0);
+		},
+
+		onCopyClick: function () {
+			var self = this;
+			var ids = Object.keys(this.selected);
+			if ( ! ids.length ) return;
+
+			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', true);
+			var $btn = this.$('.immich-copy-btn');
+			$btn.text('Copying...');
+
+			var succeeded = 0;
+			var failed = 0;
+			var completed = 0;
+			var total = ids.length;
+
+			function copyNext(index) {
+				if ( index >= ids.length ) {
+					self.onActionComplete(succeeded, failed, total);
+					return;
+				}
+
+				$btn.text('Copying ' + (index + 1) + ' of ' + total + '...');
 
 				$.ajax({
 					url: config.ajaxUrl,
@@ -277,32 +338,33 @@
 						} else {
 							failed++;
 						}
-						importNext(index + 1);
+						copyNext(index + 1);
 					},
 					error: function () {
 						completed++;
 						failed++;
-						importNext(index + 1);
+						copyNext(index + 1);
 					},
 				});
 			}
 
-			importNext(0);
+			copyNext(0);
 		},
 
-		checkComplete: function (succeeded, failed, completed, total, $btn) {
-			if ( completed < total ) return;
-			$btn.prop('disabled', false).text('Import Selected');
+		onActionComplete: function (succeeded, failed, total) {
+			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', false);
+			this.updateButtons();
+
 			if ( failed > 0 ) {
-				this.$('.immich-status-text').text(succeeded + ' imported, ' + failed + ' failed.');
+				this.$('.immich-status-text').text(succeeded + ' added, ' + failed + ' failed.');
 			} else {
-				this.$('.immich-status-text').text(succeeded + ' photo(s) imported.');
+				this.$('.immich-status-text').text(succeeded + ' photo(s) added.');
 			}
+
 			this.selected = {};
 			this.$('.immich-thumb').removeClass('selected');
-			this.updateImportButton();
+			this.updateButtons();
 
-			// Refresh the media library so imported images appear when switching tabs.
 			if ( succeeded > 0 ) {
 				var library = this.controller.state().get('library');
 				if ( library ) {
