@@ -176,7 +176,21 @@ class Immich_Media_Picker {
 			exit( 'Invalid ID.' );
 		}
 
-		$api_key = $this->get_api_key();
+		// Look up the attachment author so we use their API key, not the viewer's.
+		$author_id  = 0;
+		$attachments = get_posts( array(
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'posts_per_page' => 1,
+			'meta_key'       => '_immich_asset_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+			'meta_value'     => $id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
+			'fields'         => 'ids',
+		) );
+		if ( ! empty( $attachments ) ) {
+			$author_id = (int) get_post_field( 'post_author', $attachments[0] );
+		}
+
+		$api_key = $this->get_api_key( $author_id );
 		if ( '' === $api_key ) {
 			status_header( 500 );
 			exit( 'No API key configured.' );
