@@ -431,10 +431,6 @@ class Immich_Media_Picker {
 	}
 
 	public function enqueue_frontend_assets(): void {
-		if ( ! is_singular() ) {
-			return;
-		}
-
 		wp_enqueue_style(
 			'immich-lightbox',
 			IMMICH_MEDIA_PICKER_URL . 'assets/css/immich-lightbox.css',
