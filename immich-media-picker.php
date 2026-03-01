@@ -35,6 +35,7 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_thumbnail', array( $this, 'ajax_thumbnail' ) );
 		add_action( 'wp_ajax_immich_import', array( $this, 'ajax_import' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
+		add_action( 'init', array( $this, 'handle_proxy_request' ) );
 	}
 
 	public function add_settings_page(): void {
@@ -144,6 +145,62 @@ class Immich_Media_Picker {
 	private function get_api_url(): string {
 		$settings = get_option( 'immich_settings', array() );
 		return $settings['api_url'] ?? self::DEFAULT_API_URL;
+	}
+
+	public function handle_proxy_request(): void {
+		if ( ! isset( $_GET['immich_media_proxy'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- public proxy endpoint, no auth required
+			return;
+		}
+
+		$type = sanitize_key( $_GET['immich_media_proxy'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( ! in_array( $type, array( 'thumbnail', 'original' ), true ) ) {
+			status_header( 400 );
+			exit( 'Invalid type.' );
+		}
+
+		$id = sanitize_text_field( wp_unslash( $_GET['id'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id ) ) {
+			status_header( 400 );
+			exit( 'Invalid ID.' );
+		}
+
+		$api_key = $this->get_api_key();
+		if ( '' === $api_key ) {
+			status_header( 500 );
+			exit( 'No API key configured.' );
+		}
+
+		$base    = rtrim( $this->get_api_url(), '/' );
+		$api_url = 'thumbnail' === $type
+			? $base . '/api/assets/' . $id . '/thumbnail'
+			: $base . '/api/assets/' . $id . '/original';
+		$timeout = 'thumbnail' === $type ? 10 : 30;
+
+		$response = wp_remote_get( $api_url, array(
+			'headers' => array( 'x-api-key' => $api_key ),
+			'timeout' => $timeout,
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			status_header( 502 );
+			exit( 'Upstream error.' );
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( $code < 200 || $code >= 300 ) {
+			status_header( (int) $code );
+			exit( 'Asset not available.' );
+		}
+
+		$content_type = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
+		$body         = wp_remote_retrieve_body( $response );
+
+		header( 'Content-Type: ' . $content_type );
+		header( 'Content-Length: ' . strlen( $body ) );
+		header( 'Cache-Control: public, max-age=31536000' );
+		header( 'X-Content-Type-Options: nosniff' );
+		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
+		exit;
 	}
 
 	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null ): array|\WP_Error {
