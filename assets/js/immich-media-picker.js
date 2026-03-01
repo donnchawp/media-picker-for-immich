@@ -18,7 +18,7 @@
 			'input .immich-search-input': 'onSearchInput',
 			'change .immich-people-select': 'onPeopleChange',
 			'click .immich-thumb': 'onThumbClick',
-				'click .immich-use-btn': 'onUseClick',
+			'click .immich-use-btn': 'onUseClick',
 			'click .immich-copy-btn': 'onCopyClick',
 		},
 
@@ -39,7 +39,7 @@
 				'<div class="immich-toolbar">' +
 					'<input type="search" class="immich-search-input" placeholder="Search photos..." />' +
 					'<select class="immich-people-select"><option value="">All people</option></select>' +
-						'<button type="button" class="button button-primary immich-use-btn" disabled>Use Selected</button>' +
+					'<button type="button" class="button button-primary immich-use-btn" disabled>Use Selected</button>' +
 					'<button type="button" class="button immich-copy-btn" disabled>Copy Selected</button>' +
 				'</div>' +
 				'<div class="immich-grid"></div>' +
@@ -238,95 +238,43 @@
 		},
 
 		onUseClick: function () {
-			var self = this;
-			var ids = Object.keys(this.selected);
-			if ( ! ids.length ) return;
-
-			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', true);
-			var $btn = this.$('.immich-use-btn');
-			$btn.text('Adding...');
-
-			var succeeded = 0;
-			var failed = 0;
-			var completed = 0;
-			var total = ids.length;
-
-			function useNext(index) {
-				if ( index >= ids.length ) {
-					self.onActionComplete(succeeded, failed, total);
-					return;
-				}
-
-				$btn.text('Adding ' + (index + 1) + ' of ' + total + '...');
-
-				$.ajax({
-					url: config.ajaxUrl,
-					method: 'POST',
-					data: {
-						action: 'immich_use',
-						nonce: config.nonce,
-						id: ids[index],
-					},
-					dataType: 'json',
-					success: function (resp) {
-						completed++;
-						if ( resp.success && resp.data && resp.data.attachmentId ) {
-							succeeded++;
-							var attachment = wp.media.attachment(resp.data.attachmentId);
-							attachment.fetch().then(function () {
-								if ( self.controller.state().get('selection') ) {
-									self.controller.state().get('selection').add(attachment);
-								}
-							});
-						} else {
-							failed++;
-						}
-						useNext(index + 1);
-					},
-					error: function () {
-						completed++;
-						failed++;
-						useNext(index + 1);
-					},
-				});
-			}
-
-			useNext(0);
+			this._runAction('immich_use', this.$('.immich-use-btn'), 'Adding');
 		},
 
 		onCopyClick: function () {
+			this._runAction('immich_import', this.$('.immich-copy-btn'), 'Copying');
+		},
+
+		_runAction: function (action, $progressBtn, verb) {
 			var self = this;
 			var ids = Object.keys(this.selected);
 			if ( ! ids.length ) return;
 
 			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', true);
-			var $btn = this.$('.immich-copy-btn');
-			$btn.text('Copying...');
+			$progressBtn.text(verb + '...');
 
 			var succeeded = 0;
 			var failed = 0;
-			var completed = 0;
 			var total = ids.length;
 
-			function copyNext(index) {
+			function next(index) {
 				if ( index >= ids.length ) {
-					self.onActionComplete(succeeded, failed, total);
+					self._onActionComplete(succeeded, failed, verb);
 					return;
 				}
 
-				$btn.text('Copying ' + (index + 1) + ' of ' + total + '...');
+				$progressBtn.text(verb + ' ' + (index + 1) + ' of ' + total + '...');
 
 				$.ajax({
 					url: config.ajaxUrl,
 					method: 'POST',
 					data: {
-						action: 'immich_import',
+						action: action,
 						nonce: config.nonce,
 						id: ids[index],
 					},
 					dataType: 'json',
 					success: function (resp) {
-						completed++;
 						if ( resp.success && resp.data && resp.data.attachmentId ) {
 							succeeded++;
 							var attachment = wp.media.attachment(resp.data.attachmentId);
@@ -338,27 +286,23 @@
 						} else {
 							failed++;
 						}
-						copyNext(index + 1);
+						next(index + 1);
 					},
 					error: function () {
-						completed++;
 						failed++;
-						copyNext(index + 1);
+						next(index + 1);
 					},
 				});
 			}
 
-			copyNext(0);
+			next(0);
 		},
 
-		onActionComplete: function (succeeded, failed, total) {
-			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', false);
-			this.updateButtons();
-
+		_onActionComplete: function (succeeded, failed, verb) {
 			if ( failed > 0 ) {
-				this.$('.immich-status-text').text(succeeded + ' added, ' + failed + ' failed.');
+				this.$('.immich-status-text').text(succeeded + ' ' + verb.toLowerCase() + ', ' + failed + ' failed.');
 			} else {
-				this.$('.immich-status-text').text(succeeded + ' photo(s) added.');
+				this.$('.immich-status-text').text(succeeded + ' photo(s) ' + verb.toLowerCase() + '.');
 			}
 
 			this.selected = {};
