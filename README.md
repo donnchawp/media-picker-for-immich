@@ -1,15 +1,18 @@
 # Immich Media Picker
 
-A WordPress plugin that adds an **Immich** tab to the media picker modal, letting you search, browse, and import photos from your [Immich](https://immich.app/) server directly into the WordPress media library.
+A WordPress plugin that adds an **Immich** tab to the media picker, letting you use photos and videos from your [Immich](https://immich.app/) server in WordPress — either proxied directly or imported into the media library.
 
 ## Features
 
-- **Smart search** — Find photos using Immich's AI-powered search
-- **People filter** — Browse by recognized people from your Immich library
-- **One-click import** — Selected photos are downloaded and imported as standard WordPress media library attachments
-- **Multi-select** — Import multiple photos at once
-- **Secure API proxy** — All Immich API calls happen server-side; the API key is never exposed to the browser
-- **Per-user API keys** — Each WordPress user can configure their own Immich API key, or an admin can set a site-wide key
+- **Use or Copy** — "Use" proxies media directly from Immich (no files copied to WordPress); "Copy" downloads the original into the media library
+- **Photo and video support** — images are proxied with full-resolution originals; videos stream with seeking support
+- **Smart search** — find media using Immich's AI-powered search
+- **People filter** — browse by recognized people from your Immich library
+- **Multi-select** — use or import multiple items at once with infinite scroll
+- **Lightbox** — full-resolution lightbox on Immich images in posts (click to enlarge, Escape to close)
+- **Previously added** — the Immich tab shows assets you've already used, ready to re-select
+- **Secure API proxy** — all Immich API calls happen server-side; the API key is never exposed to the browser
+- **Per-user API keys** — each user can configure their own Immich API key; the proxy uses the post author's key so media displays correctly regardless of who is viewing
 
 ## Requirements
 
@@ -31,16 +34,32 @@ An admin can set a single API key in **Settings > Immich** that all users share.
 
 ### Per-user API keys
 
-If no site-wide key is configured, each user can add their own Immich API key on their **Profile** page. Any Immich user can generate an API key from the Immich web UI under **Account Settings > API Keys**.
+If no site-wide key is configured, each user can add their own Immich API key on their **Profile** page. Generate an API key from the Immich web UI under **Account Settings > API Keys**.
+
+When per-user keys are in use, the proxy serves media using the key of the user who added the asset — so posts by different authors each pull from the correct Immich account.
 
 ## Usage
 
+### Adding media to a post
+
 1. Open the media picker (e.g. click **Add Media** on a post)
 2. Click the **Immich** tab
-3. Search for photos or select a person from the dropdown
+3. Browse recent photos, search by keyword, or filter by person
 4. Click thumbnails to select them
-5. Click **Import Selected**
-6. The photos are imported into your WordPress media library and selected in the modal
+5. Click **Use Selected** to proxy directly from Immich, or **Copy Selected** to download into the media library
+6. The media is added to your post
+
+**Use Selected** creates a virtual attachment that serves images and videos through your WordPress server as a proxy — no files are stored locally. This is ideal for keeping your WordPress uploads directory lean.
+
+**Copy Selected** downloads the full original file into `wp-content/uploads/` as a standard WordPress attachment. Use this when you want a local copy independent of your Immich server.
+
+### Previously added assets
+
+The bottom of the Immich tab shows assets you've previously added. Click them to re-select without searching again.
+
+### Lightbox
+
+Posts containing Immich images automatically get a lightbox. Clicking an image opens the full-resolution original in an overlay. Press Escape or click anywhere to close.
 
 ## Development
 
@@ -59,17 +78,6 @@ make status      # Show plugin status
 make logs        # Show WordPress debug log
 make shell       # Shell into the container
 make cli CMD="option list"  # Run WP-CLI commands
-```
-
-## Plugin structure
-
-```
-immich-media-picker/
-├── immich-media-picker.php        # Plugin class: settings, AJAX endpoints, API client
-├── assets/js/immich-media-picker.js  # Media modal tab (wp.media.view extension)
-├── .wp-env.json                   # wp-env config
-├── Makefile                       # Development commands
-└── readme.txt                     # WordPress plugin readme
 ```
 
 ## License
