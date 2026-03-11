@@ -24,7 +24,7 @@
 			'click .immich-used-thumb': 'onUsedThumbClick',
 		},
 
-		initialize: function () {
+		initialize: function (options) {
 			this.selected = {};
 			this.searchTimer = null;
 			this.currentPage = 1;
@@ -34,6 +34,7 @@
 			this.lastPersonId = '';
 			this.browsing = false;
 			this.browseNextPage = null;
+			this.isManageFrame = !!(options && options.isManageFrame);
 			this.render();
 			this.loadPeople();
 			this.loadUsedAssets();
@@ -359,15 +360,19 @@
 					success: function (resp) {
 						if ( resp.success && resp.data && resp.data.attachmentId ) {
 							succeeded++;
-							var attachment = wp.media.attachment(resp.data.attachmentId);
-							attachment.fetch().then(function () {
-								if ( self.controller.state().get('selection') ) {
-									self.controller.state().get('selection').add(attachment);
-								}
+							if ( self.isManageFrame ) {
 								next(index + 1);
-							}, function () {
-								next(index + 1);
-							});
+							} else {
+								var attachment = wp.media.attachment(resp.data.attachmentId);
+								attachment.fetch().then(function () {
+									if ( self.controller.state().get('selection') ) {
+										self.controller.state().get('selection').add(attachment);
+									}
+									next(index + 1);
+								}, function () {
+									next(index + 1);
+								});
+							}
 						} else {
 							failed++;
 							next(index + 1);
@@ -395,9 +400,8 @@
 			this.updateButtons();
 
 			if ( succeeded > 0 ) {
-				var library = this.controller.state().get('library');
-				if ( library ) {
-					library._requery( true );
+				if ( this.controller.state() && this.controller.state().get('library') ) {
+					this.controller.state().get('library')._requery( true );
 				}
 				this.loadUsedAssets();
 			}
@@ -435,7 +439,9 @@
 						self.$('.immich-used-divider').show();
 					}
 
-					var selection = self.controller.state().get('selection');
+					var selection = !self.isManageFrame &&
+						self.controller.state() &&
+						self.controller.state().get('selection');
 					items.forEach(function (item) {
 						var isSelected = selection && !!selection.get(item.attachmentId);
 						var $thumb = $(
@@ -463,7 +469,7 @@
 
 			if ( scrollTop + clientHeight >= scrollHeight - 200 ) {
 				var nextPage = this.usedNextPage;
-				this.usedNextPage = null; // prevent duplicate requests
+				this.usedNextPage = null;
 				this.fetchUsedPage(nextPage);
 			}
 		},
@@ -472,11 +478,14 @@
 			var self = this;
 			var $thumb = $(e.currentTarget);
 			var attachmentId = $thumb.data('attachment-id');
-			var selection = this.controller.state().get('selection');
 
+			if ( this.isManageFrame ) {
+				return;
+			}
+
+			var selection = this.controller.state().get('selection');
 			if ( ! selection ) return;
 
-			// Toggle off if already selected.
 			if ( selection.get(attachmentId) ) {
 				selection.remove(selection.get(attachmentId));
 				$thumb.removeClass('selected');
@@ -542,6 +551,48 @@
 				});
 				this.content.set(view);
 			}, this);
+		};
+	}
+
+	/**
+	 * Hook into the Manage media frame (Media > Library grid mode at upload.php).
+	 *
+	 * Unlike Post/Select frames, Manage never binds router events so the
+	 * router region stays empty. We hook into bindRegionModeHandlers to
+	 * wire up the router and add an Immich content handler.
+	 *
+	 * The frame is instantiated on DOM ready via media.js, so prototype
+	 * overrides here take effect before instantiation.
+	 */
+	if ( wp.media.view.MediaFrame.Manage ) {
+		var originalManageBindRegion = wp.media.view.MediaFrame.Manage.prototype.bindRegionModeHandlers;
+
+		wp.media.view.MediaFrame.Manage.prototype.bindRegionModeHandlers = function () {
+			originalManageBindRegion.call(this);
+
+			// Bind router creation and rendering (Manage never does this itself).
+			this.on( 'router:create:browse', this.createRouter, this );
+			this.on( 'router:render:browse', function ( routerView ) {
+				routerView.set({
+					browse: {
+						text: wp.media.view.l10n.mediaLibraryTitle || 'Media Library',
+						priority: 40,
+					},
+					immich: {
+						text: 'Immich',
+						priority: 60,
+					},
+				});
+			}, this );
+
+			// Handle Immich content creation.
+			this.on( 'content:create:immich', function () {
+				var view = new ImmichBrowser({
+					controller: this,
+					isManageFrame: true,
+				});
+				this.content.set( view );
+			}, this );
 		};
 	}
 

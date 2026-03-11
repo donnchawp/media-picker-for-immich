@@ -424,10 +424,18 @@ class Immich_Media_Picker {
 			return;
 		}
 
+		// On the Media Library page, depend on media-grid so our script
+		// loads after MediaFrame.Manage is defined.
+		$deps = array( 'jquery', 'media-views' );
+		$screen = get_current_screen();
+		if ( $screen && 'upload' === $screen->id ) {
+			$deps[] = 'media-grid';
+		}
+
 		wp_enqueue_script(
 			'immich-media-picker',
 			IMMICH_MEDIA_PICKER_URL . 'assets/js/immich-media-picker.js',
-			array( 'jquery', 'media-views' ),
+			$deps,
 			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/js/immich-media-picker.js' ),
 			true
 		);
