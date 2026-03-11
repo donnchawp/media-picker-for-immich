@@ -11,7 +11,7 @@ Import photos from your Immich server into the WordPress media library.
 
 == Description ==
 
-Adds an "Immich" tab to the WordPress media picker modal. Search and browse your Immich photo library, then import selected photos directly into WordPress.
+Adds an "Immich" tab to the WordPress media picker modal and the Media Library grid view. Search and browse your Immich photo library, then import selected photos directly into WordPress or proxy them without copying files.
 
 == Changelog ==
 

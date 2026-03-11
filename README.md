@@ -1,6 +1,6 @@
 # Immich Media Picker
 
-A WordPress plugin that adds an **Immich** tab to the media picker, letting you use photos and videos from your [Immich](https://immich.app/) server in WordPress — either proxied directly or imported into the media library.
+A WordPress plugin that adds an **Immich** tab to the WordPress media picker and the Media Library, letting you use photos and videos from your [Immich](https://immich.app/) server in WordPress — either proxied directly or imported into the media library.
 
 ## Features
 
@@ -10,6 +10,7 @@ A WordPress plugin that adds an **Immich** tab to the media picker, letting you 
 - **People filter** — browse by recognized people from your Immich library
 - **Multi-select** — use or import multiple items at once with infinite scroll
 - **Lightbox** — full-resolution lightbox on Immich images in posts (click to enlarge, Escape to close)
+- **Media Library integration** — browse and import Immich assets directly from the Media Library grid view (Media > Library)
 - **Previously added** — the Immich tab shows assets you've already used, ready to re-select
 - **Secure API proxy** — all Immich API calls happen server-side; the API key is never exposed to the browser
 - **Per-user API keys** — each user can configure their own Immich API key; the proxy uses the post author's key so media displays correctly regardless of who is viewing
@@ -48,6 +49,14 @@ When per-user keys are in use, the proxy serves media using the key of the user 
 4. Click thumbnails to select them
 5. Click **Use Selected** to proxy directly from Immich, or **Copy Selected** to download into the media library
 6. The media is added to your post
+
+### Browsing from the Media Library
+
+1. Go to **Media > Library** (grid mode)
+2. Click the **Immich** tab at the top of the page
+3. Browse, search, or filter by person — the same interface as the media picker
+4. Click **Use Selected** or **Copy Selected** to add assets to your WordPress media library
+5. Switch back to the **Media Library** tab to see the newly added items
 
 **Use Selected** creates a virtual attachment that serves images and videos through your WordPress server as a proxy — no files are stored locally. This is ideal for keeping your WordPress uploads directory lean.
 
