@@ -300,7 +300,8 @@ class Immich_Media_Picker {
 			),
 		) );
 
-		$remote = @fopen( $url, 'rb', false, $context ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- streaming binary video data from remote API
+		$remote = fopen( $url, 'rb', false, $context );
 		if ( ! $remote ) {
 			status_header( 502 );
 			exit( 'Failed to connect to Immich.' );
