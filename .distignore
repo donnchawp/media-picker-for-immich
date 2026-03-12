@@ -1,0 +1,9 @@
+/.distignore
+/.git
+/.gitignore
+/.wp-env.json
+/.claude
+/Makefile
+/README.md
+/docs
+/whats-next.md
