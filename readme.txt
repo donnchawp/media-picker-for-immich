@@ -26,6 +26,7 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
 * **Previously added** — the Immich tab shows assets you've already used, ready to re-select
 * **Secure API proxy** — all Immich API calls happen server-side; the API key is never exposed to the browser
 * **Per-user API keys** — each user can configure their own Immich API key
+* **Local proxy cache** — proxied media is cached on disk after the first request; optional automatic cleanup with configurable lifetime
 
 == Installation ==
 
@@ -53,6 +54,10 @@ Your Immich server must be accessible from your WordPress server, but it does no
 = Can different users have their own API keys? =
 
 Yes. If no site-wide API key is set in **Settings > Immich**, each user can add their own key on their **Profile** page. The proxy serves media using the key of the user who added the asset.
+
+= How does the proxy cache work? =
+
+When a proxied image or video is requested for the first time, the plugin fetches it from Immich and saves a copy in `wp-content/cache/immich/`. All subsequent requests are served from the local cache without contacting your Immich server. To enable automatic cleanup, check **Cache Cleanup** in **Settings > Immich** and set a lifetime in hours (default 24). When disabled, cached files are kept indefinitely.
 
 = Does the lightbox work automatically? =
 

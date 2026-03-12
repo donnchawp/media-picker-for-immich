@@ -39,6 +39,14 @@ If no site-wide key is configured, each user can add their own Immich API key on
 
 When per-user keys are in use, the proxy serves media using the key of the user who added the asset — so posts by different authors each pull from the correct Immich account.
 
+### Proxy cache
+
+When you use "Use Selected", proxied media is cached locally on the WordPress server the first time it's requested. Subsequent requests are served directly from disk without contacting your Immich server. Cached files are stored in `wp-content/cache/immich/` organised by type (`thumbnail/`, `original/`, `video/`).
+
+Concurrent requests for the same asset are blocked until the first request completes, so each file is only fetched once from Immich.
+
+To enable automatic cleanup, check **Cache Cleanup** in **Settings > Immich** and set a **Cache Lifetime** in hours (default 24). The plugin uses WP-Cron to delete cached files older than the configured lifetime once per hour. Disable the checkbox to keep cached files indefinitely.
+
 ## Usage
 
 ### Adding media to a post

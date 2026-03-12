@@ -44,6 +44,7 @@ class Immich_Media_Picker {
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
 		add_filter( 'the_content', array( $this, 'maybe_enqueue_lightbox' ) );
+		add_action( 'immich_cache_gc', array( $this, 'run_cache_gc' ) );
 	}
 
 	public function add_settings_page(): void {
@@ -64,8 +65,10 @@ class Immich_Media_Picker {
 				'type'              => 'array',
 				'sanitize_callback' => array( $this, 'sanitize_settings' ),
 				'default'           => array(
-					'api_url' => self::DEFAULT_API_URL,
-					'api_key' => '',
+					'api_url'   => self::DEFAULT_API_URL,
+					'api_key'   => '',
+					'cache_gc'  => false,
+					'cache_ttl' => 24,
 				),
 			)
 		);
@@ -92,6 +95,29 @@ class Immich_Media_Picker {
 			'immich-media-picker',
 			'immich_main'
 		);
+
+		add_settings_section(
+			'immich_cache',
+			__( 'Cache', 'immich-media-picker' ),
+			array( $this, 'render_cache_section' ),
+			'immich-media-picker'
+		);
+
+		add_settings_field(
+			'immich_cache_gc',
+			__( 'Cache Cleanup', 'immich-media-picker' ),
+			array( $this, 'render_cache_gc_field' ),
+			'immich-media-picker',
+			'immich_cache'
+		);
+
+		add_settings_field(
+			'immich_cache_ttl',
+			__( 'Cache Lifetime', 'immich-media-picker' ),
+			array( $this, 'render_cache_ttl_field' ),
+			'immich-media-picker',
+			'immich_cache'
+		);
 	}
 
 	public function sanitize_settings( array $input ): array {
@@ -111,9 +137,22 @@ class Immich_Media_Picker {
 			$api_url = $existing['api_url'] ?? '';
 		}
 
+		$cache_gc  = ! empty( $input['cache_gc'] );
+		$cache_ttl = absint( $input['cache_ttl'] ?? 24 );
+		$cache_ttl = max( 1, $cache_ttl );
+
+		// Schedule or unschedule the GC cron based on the setting.
+		if ( $cache_gc && ! wp_next_scheduled( 'immich_cache_gc' ) ) {
+			wp_schedule_event( time(), 'hourly', 'immich_cache_gc' );
+		} elseif ( ! $cache_gc ) {
+			wp_clear_scheduled_hook( 'immich_cache_gc' );
+		}
+
 		return array(
-			'api_url' => $api_url,
-			'api_key' => $api_key,
+			'api_url'   => $api_url,
+			'api_key'   => $api_key,
+			'cache_gc'  => $cache_gc,
+			'cache_ttl' => $cache_ttl,
 		);
 	}
 
@@ -134,6 +173,82 @@ class Immich_Media_Picker {
 			esc_attr( $value )
 		);
 		echo '<p class="description">' . esc_html__( 'When set, all users will use this key. Leave empty to allow per-user keys.', 'immich-media-picker' ) . '</p>';
+	}
+
+	public function render_cache_section(): void {
+		$cache_dir = WP_CONTENT_DIR . '/cache/immich';
+		$writable  = wp_mkdir_p( $cache_dir ) && wp_is_writable( $cache_dir );
+		if ( ! $writable ) {
+			printf(
+				'<div class="notice notice-error inline"><p>%s <code>%s</code></p></div>',
+				esc_html__( 'The cache directory is not writable. Proxied media will not be cached. Please check permissions for:', 'immich-media-picker' ),
+				esc_html( $cache_dir )
+			);
+		}
+	}
+
+	public function render_cache_gc_field(): void {
+		$settings = get_option( 'immich_settings', array() );
+		$checked  = ! empty( $settings['cache_gc'] );
+		printf(
+			'<label><input type="checkbox" name="immich_settings[cache_gc]" value="1" %s /> %s</label>',
+			checked( $checked, true, false ),
+			esc_html__( 'Automatically delete cached files after the lifetime below.', 'immich-media-picker' )
+		);
+	}
+
+	public function render_cache_ttl_field(): void {
+		$settings = get_option( 'immich_settings', array() );
+		$value    = $settings['cache_ttl'] ?? 24;
+		printf(
+			'<input type="number" name="immich_settings[cache_ttl]" value="%s" min="1" class="small-text" /> %s',
+			esc_attr( $value ),
+			esc_html__( 'hours', 'immich-media-picker' )
+		);
+	}
+
+	/**
+	 * WP-Cron callback: delete cached proxy files older than the configured TTL.
+	 */
+	public function run_cache_gc(): void {
+		$settings = get_option( 'immich_settings', array() );
+		if ( empty( $settings['cache_gc'] ) ) {
+			return;
+		}
+
+		$ttl_seconds = ( (int) ( $settings['cache_ttl'] ?? 24 ) ) * HOUR_IN_SECONDS;
+		$cache_root  = WP_CONTENT_DIR . '/cache/immich';
+
+		if ( ! is_dir( $cache_root ) ) {
+			return;
+		}
+
+		$now = time();
+		foreach ( array( 'thumbnail', 'original', 'video' ) as $type ) {
+			$dir = $cache_root . '/' . $type;
+			if ( ! is_dir( $dir ) ) {
+				continue;
+			}
+			$handle = opendir( $dir );
+			if ( ! $handle ) {
+				continue;
+			}
+			while ( false !== ( $entry = readdir( $handle ) ) ) {
+				if ( '.' === $entry || '..' === $entry ) {
+					continue;
+				}
+				// Skip lock files — they're tiny and cleaned up naturally.
+				if ( str_ends_with( $entry, '.lock' ) ) {
+					continue;
+				}
+				$path  = $dir . '/' . $entry;
+				$mtime = filemtime( $path );
+				if ( false !== $mtime && ( $now - $mtime ) > $ttl_seconds ) {
+					wp_delete_file( $path );
+				}
+			}
+			closedir( $handle );
+		}
 	}
 
 	private function get_api_key( int $user_id = 0 ): string {
@@ -159,6 +274,9 @@ class Immich_Media_Picker {
 	 * Public proxy endpoint — intentionally unauthenticated so proxied images
 	 * work in published posts for anonymous visitors. The Immich API key is
 	 * never exposed; it stays server-side. UUIDs are validated but not secret.
+	 *
+	 * Assets are cached locally on first request. Concurrent requests for the
+	 * same asset block on a file lock so only one upstream fetch occurs.
 	 */
 	public function handle_proxy_request(): void {
 		if ( ! isset( $_GET['immich_media_proxy'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- public proxy endpoint, no auth required
@@ -177,8 +295,42 @@ class Immich_Media_Picker {
 			exit( 'Invalid ID.' );
 		}
 
+		$allowed_types = array(
+			'thumbnail' => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
+			'original'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif', 'image/tiff', 'video/mp4', 'video/quicktime' ),
+			'video'     => array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' ),
+		);
+
+		$paths = $this->get_cache_paths( $type, $id );
+
+		// Serve from cache if available.
+		if ( file_exists( $paths['file'] ) && file_exists( $paths['meta'] ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading single-line cache metadata, not a remote URL
+			$content_type = file_get_contents( $paths['meta'] );
+			$this->serve_cached_asset( $paths['file'], $content_type, $type );
+		}
+
+		// Cache miss — acquire lock so only one request fetches from Immich.
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- lock file for cache synchronization
+		$lock_fh = fopen( $paths['lock'], 'cb' );
+		if ( ! $lock_fh ) {
+			status_header( 500 );
+			exit( 'Failed to acquire cache lock.' );
+		}
+		flock( $lock_fh, LOCK_EX );
+
+		// Double-check: another process may have populated the cache while we waited.
+		if ( file_exists( $paths['file'] ) && file_exists( $paths['meta'] ) ) {
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+			$content_type = file_get_contents( $paths['meta'] );
+			$this->serve_cached_asset( $paths['file'], $content_type, $type );
+		}
+
 		// Look up the attachment author so we use their API key, not the viewer's.
-		$author_id  = 0;
+		$author_id   = 0;
 		$attachments = get_posts( array(
 			'post_type'      => 'attachment',
 			'post_status'    => 'inherit',
@@ -193,173 +345,167 @@ class Immich_Media_Picker {
 
 		$api_key = $this->get_api_key( $author_id );
 		if ( '' === $api_key ) {
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
 			status_header( 500 );
 			exit( 'No API key configured.' );
 		}
 
-		if ( 'video' === $type ) {
-			$base = rtrim( $this->get_api_url(), '/' );
-			$this->stream_video( $base . '/api/assets/' . $id . '/video/playback', $api_key );
-			return;
-		}
-
 		$base    = rtrim( $this->get_api_url(), '/' );
-		$api_url = 'thumbnail' === $type
-			? $base . '/api/assets/' . $id . '/thumbnail'
-			: $base . '/api/assets/' . $id . '/original';
-		$timeout = 'thumbnail' === $type ? 10 : 30;
+		$api_url = match ( $type ) {
+			'thumbnail' => $base . '/api/assets/' . $id . '/thumbnail',
+			'video'     => $base . '/api/assets/' . $id . '/video/playback',
+			default     => $base . '/api/assets/' . $id . '/original',
+		};
+		$timeout = match ( $type ) {
+			'thumbnail' => 10,
+			'video'     => 120,
+			default     => 30,
+		};
 
-		// Stream originals via temp file to avoid buffering large files in memory.
-		if ( 'original' === $type ) {
-			$tmp_file = tempnam( get_temp_dir(), 'immich_' );
-			$response = wp_remote_get( $api_url, array(
-				'headers'  => array( 'x-api-key' => $api_key ),
-				'timeout'  => $timeout,
-				'stream'   => true,
-				'filename' => $tmp_file,
-			) );
-
-			if ( is_wp_error( $response ) ) {
-				@unlink( $tmp_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-				status_header( 502 );
-				exit( 'Upstream error.' );
-			}
-
-			$code = wp_remote_retrieve_response_code( $response );
-			if ( $code < 200 || $code >= 300 ) {
-				wp_delete_file( $tmp_file );
-				status_header( (int) $code );
-				exit( 'Asset not available.' );
-			}
-
-			$content_type  = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
-			$allowed_types = array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif', 'image/tiff', 'video/mp4', 'video/quicktime' );
-			if ( ! in_array( $content_type, $allowed_types, true ) ) {
-				wp_delete_file( $tmp_file );
-				status_header( 502 );
-				exit( 'Unexpected content type.' );
-			}
-
-			header( 'Content-Type: ' . $content_type );
-			header( 'Content-Length: ' . filesize( $tmp_file ) );
-			header( 'Cache-Control: public, max-age=31536000' );
-			header( 'X-Content-Type-Options: nosniff' );
-			readfile( $tmp_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile
-			wp_delete_file( $tmp_file );
-			exit;
-		}
-
+		// Fetch from Immich and stream directly to the cache file.
 		$response = wp_remote_get( $api_url, array(
-			'headers' => array( 'x-api-key' => $api_key ),
-			'timeout' => $timeout,
+			'headers'  => array( 'x-api-key' => $api_key ),
+			'timeout'  => $timeout,
+			'stream'   => true,
+			'filename' => $paths['file'],
 		) );
 
 		if ( is_wp_error( $response ) ) {
+			wp_delete_file( $paths['file'] );
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
 			status_header( 502 );
 			exit( 'Upstream error.' );
 		}
 
 		$code = wp_remote_retrieve_response_code( $response );
 		if ( $code < 200 || $code >= 300 ) {
+			wp_delete_file( $paths['file'] );
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
 			status_header( (int) $code );
 			exit( 'Asset not available.' );
 		}
 
-		$content_type  = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
-		$allowed_types = array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' );
-		if ( ! in_array( $content_type, $allowed_types, true ) ) {
+		$content_type = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
+		if ( ! in_array( $content_type, $allowed_types[ $type ], true ) ) {
+			wp_delete_file( $paths['file'] );
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
 			status_header( 502 );
 			exit( 'Unexpected content type.' );
 		}
-		$body = wp_remote_retrieve_body( $response );
 
-		header( 'Content-Type: ' . $content_type );
-		header( 'Content-Length: ' . mb_strlen( $body, '8bit' ) );
-		header( 'Cache-Control: public, max-age=31536000' );
+		// Write content-type metadata, then release the lock.
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- writing single-line cache metadata
+		file_put_contents( $paths['meta'], $content_type );
+		flock( $lock_fh, LOCK_UN );
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		fclose( $lock_fh );
+
+		$this->serve_cached_asset( $paths['file'], $content_type, $type );
+	}
+
+	/**
+	 * Return cache file paths for a given proxy type and asset ID.
+	 */
+	private function get_cache_paths( string $type, string $id ): array {
+		$cache_dir = WP_CONTENT_DIR . '/cache/immich/' . $type;
+		wp_mkdir_p( $cache_dir );
+		return array(
+			'file' => $cache_dir . '/' . $id,
+			'meta' => $cache_dir . '/' . $id . '.type',
+			'lock' => $cache_dir . '/' . $id . '.lock',
+		);
+	}
+
+	/**
+	 * Serve a cached asset and exit. For video, handles Range requests.
+	 *
+	 * @return never
+	 */
+	private function serve_cached_asset( string $file, string $content_type, string $type ): void {
 		header( 'X-Content-Type-Options: nosniff' );
-		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
+		header( 'Content-Type: ' . $content_type );
+
+		if ( 'video' === $type ) {
+			$this->serve_cached_video( $file );
+		}
+
+		header( 'Content-Length: ' . filesize( $file ) );
+		header( 'Cache-Control: public, max-age=31536000' );
+		readfile( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile
 		exit;
 	}
 
-	private function stream_video( string $url, string $api_key ): void {
-		$headers = array( 'x-api-key: ' . $api_key );
-
-		// Forward Range header for seeking support.
+	/**
+	 * Serve a cached video file with Range request support and exit.
+	 *
+	 * @return never
+	 */
+	private function serve_cached_video( string $file ): void {
+		$size  = filesize( $file );
 		$range = isset( $_SERVER['HTTP_RANGE'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_RANGE'] ) ) : '';
-		if ( '' !== $range ) {
-			$headers[] = 'Range: ' . $range;
-		}
 
-		$context = stream_context_create( array(
-			'http' => array(
-				'method'        => 'GET',
-				'header'        => implode( "\r\n", $headers ),
-				'ignore_errors' => true,
-				'timeout'       => 60,
-				'max_redirects' => 0,
-			),
-		) );
+		header( 'Accept-Ranges: bytes' );
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- streaming binary video data from remote API
-		$remote = fopen( $url, 'rb', false, $context );
-		if ( ! $remote ) {
-			status_header( 502 );
-			exit( 'Failed to connect to Immich.' );
-		}
+		if ( '' !== $range && preg_match( '/bytes=(\d+)-(\d*)/', $range, $m ) ) {
+			$start = (int) $m[1];
+			$end   = '' !== $m[2] ? (int) $m[2] : $size - 1;
+			$end   = min( $end, $size - 1 );
 
-		// Parse response headers from stream metadata.
-		$meta             = stream_get_meta_data( $remote );
-		$response_headers = $meta['wrapper_data'] ?? array();
-		$status_code      = 200;
-		$content_type     = '';
-
-		foreach ( $response_headers as $header_line ) {
-			if ( preg_match( '/^HTTP\/[\d.]+ (\d+)/', $header_line, $m ) ) {
-				$status_code = (int) $m[1];
-			} elseif ( preg_match( '/^(Content-Type|Content-Length|Content-Range|Accept-Ranges):\s*(.+)/i', $header_line, $m ) ) {
-				if ( 'content-type' === strtolower( $m[1] ) ) {
-					$content_type = strtok( trim( $m[2] ), ';' );
-				} else {
-					header( $m[1] . ': ' . trim( $m[2] ) );
-				}
+			if ( $start > $end || $start >= $size ) {
+				status_header( 416 );
+				header( 'Content-Range: bytes */' . $size );
+				exit;
 			}
-		}
 
-		// Validate status before content-type (error responses may have non-video content types).
-		if ( $status_code < 200 || ( $status_code >= 300 && 206 !== $status_code ) ) {
-			fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-			status_header( $status_code >= 500 ? 502 : $status_code );
-			exit( 'Asset not available.' );
-		}
-
-		$allowed_video_types = array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' );
-		if ( ! in_array( $content_type, $allowed_video_types, true ) ) {
-			fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
-			status_header( 502 );
-			exit( 'Unexpected content type.' );
-		}
-
-		header( 'Content-Type: ' . $content_type );
-		status_header( $status_code );
-		header( 'X-Content-Type-Options: nosniff' );
-		if ( 206 === $status_code ) {
+			$length = $end - $start + 1;
+			status_header( 206 );
+			header( 'Content-Range: bytes ' . $start . '-' . $end . '/' . $size );
+			header( 'Content-Length: ' . $length );
 			header( 'Cache-Control: no-store' );
-		} else {
-			header( 'Cache-Control: public, max-age=31536000' );
+
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- serving partial file content for Range request
+			$fh = fopen( $file, 'rb' );
+			if ( ! $fh ) {
+				status_header( 500 );
+				exit( 'Failed to read cached file.' );
+			}
+			fseek( $fh, $start );
+
+			while ( ob_get_level() > 0 ) {
+				ob_end_clean();
+			}
+
+			$remaining = $length;
+			while ( $remaining > 0 && ! feof( $fh ) ) {
+				$chunk = min( 8192, $remaining );
+				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped, WordPress.WP.AlternativeFunctions.file_system_operations_fread -- binary video data
+				echo fread( $fh, $chunk );
+				$remaining -= $chunk;
+				flush();
+			}
+
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $fh );
+			exit;
 		}
 
-		// Flush any output buffers to enable true streaming.
+		// Full request.
+		header( 'Content-Length: ' . $size );
+		header( 'Cache-Control: public, max-age=31536000' );
+
 		while ( ob_get_level() > 0 ) {
 			ob_end_clean();
 		}
 
-		// Stream in 8KB chunks.
-		while ( ! feof( $remote ) ) {
-			echo fread( $remote, 8192 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped, WordPress.WP.AlternativeFunctions.file_system_operations_fread
-			flush();
-		}
-
-		fclose( $remote ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		readfile( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile
 		exit;
 	}
 
