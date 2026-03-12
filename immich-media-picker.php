@@ -6,6 +6,7 @@
  * Requires at least: 6.4
  * Requires PHP: 8.0
  * Author: Donncha
+ * Text Domain: immich-media-picker
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  */
@@ -426,7 +427,7 @@ class Immich_Media_Picker {
 
 		// On the Media Library page, depend on media-grid so our script
 		// loads after MediaFrame.Manage is defined.
-		$deps = array( 'jquery', 'media-views' );
+		$deps = array( 'jquery', 'media-views', 'wp-i18n' );
 		$screen = get_current_screen();
 		if ( $screen && 'upload' === $screen->id ) {
 			$deps[] = 'media-grid';
@@ -439,6 +440,8 @@ class Immich_Media_Picker {
 			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/js/immich-media-picker.js' ),
 			true
 		);
+
+		wp_set_script_translations( 'immich-media-picker', 'immich-media-picker' );
 
 		wp_localize_script( 'immich-media-picker', 'ImmichMediaPicker', array(
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),

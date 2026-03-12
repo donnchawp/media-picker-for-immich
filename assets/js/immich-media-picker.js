@@ -5,6 +5,9 @@
 		return;
 	}
 
+	var __ = wp.i18n.__;
+	var _x = wp.i18n._x;
+	var sprintf = wp.i18n.sprintf;
 	var config = window.ImmichMediaPicker || {};
 
 	/**
@@ -44,14 +47,14 @@
 		render: function () {
 			this.$el.html(
 				'<div class="immich-toolbar">' +
-					'<input type="search" class="immich-search-input" placeholder="Search photos..." />' +
-					'<select class="immich-people-select"><option value="">All people</option></select>' +
-					'<button type="button" class="button immich-browse-btn">Browse</button>' +
-					'<button type="button" class="button button-primary immich-use-btn" disabled>Use Selected</button>' +
-					'<button type="button" class="button immich-copy-btn" disabled>Copy Selected</button>' +
+					'<input type="search" class="immich-search-input" placeholder="' + _.escape( __( 'Search photos\u2026', 'immich-media-picker' ) ) + '" />' +
+					'<select class="immich-people-select"><option value="">' + _.escape( __( 'All people', 'immich-media-picker' ) ) + '</option></select>' +
+					'<button type="button" class="button immich-browse-btn">' + _.escape( __( 'Browse', 'immich-media-picker' ) ) + '</button>' +
+					'<button type="button" class="button button-primary immich-use-btn" disabled>' + _.escape( __( 'Use Selected', 'immich-media-picker' ) ) + '</button>' +
+					'<button type="button" class="button immich-copy-btn" disabled>' + _.escape( __( 'Copy Selected', 'immich-media-picker' ) ) + '</button>' +
 				'</div>' +
 				'<div class="immich-grid"></div>' +
-				'<div class="immich-used-divider" style="display:none;"><span>Previously added</span></div>' +
+				'<div class="immich-used-divider" style="display:none;"><span>' + _.escape( __( 'Previously added', 'immich-media-picker' ) ) + '</span></div>' +
 				'<div class="immich-used-grid"></div>' +
 				'<div class="immich-status"><span class="spinner"></span><span class="immich-status-text"></span></div>'
 			);
@@ -112,9 +115,9 @@
 			this.loading = true;
 			this.$('.spinner').addClass('is-active');
 			if ( page === 1 ) {
-				this.$('.immich-status-text').text('Loading latest photos...');
+				this.$('.immich-status-text').text( __( 'Loading latest photos\u2026', 'immich-media-picker' ) );
 			} else {
-				this.$('.immich-status-text').text('Loading more...');
+				this.$('.immich-status-text').text( __( 'Loading more\u2026', 'immich-media-picker' ) );
 			}
 
 			$.ajax({
@@ -132,7 +135,7 @@
 					self.loading = false;
 
 					if ( ! resp.success ) {
-						self.$('.immich-status-text').text('Failed to load photos.');
+						self.$('.immich-status-text').text( __( 'Failed to load photos.', 'immich-media-picker' ) );
 						return;
 					}
 
@@ -147,7 +150,7 @@
 				},
 				error: function () {
 					self.$('.spinner').removeClass('is-active');
-					self.$('.immich-status-text').text('Request failed.');
+					self.$('.immich-status-text').text( __( 'Request failed.', 'immich-media-picker' ) );
 					self.loading = false;
 				},
 			});
@@ -233,9 +236,9 @@
 
 			this.$('.spinner').addClass('is-active');
 			if ( ! append ) {
-				this.$('.immich-status-text').text('Searching...');
+				this.$('.immich-status-text').text( __( 'Searching\u2026', 'immich-media-picker' ) );
 			} else {
-				this.$('.immich-status-text').text('Loading more...');
+				this.$('.immich-status-text').text( __( 'Loading more\u2026', 'immich-media-picker' ) );
 			}
 
 			$.ajax({
@@ -249,7 +252,7 @@
 					self.loading = false;
 
 					if ( ! resp.success ) {
-						self.$('.immich-status-text').text('Search failed. Please try again.');
+						self.$('.immich-status-text').text( __( 'Search failed. Please try again.', 'immich-media-picker' ) );
 						return;
 					}
 
@@ -264,7 +267,7 @@
 				},
 				error: function () {
 					self.$('.spinner').removeClass('is-active');
-					self.$('.immich-status-text').text('Request failed.');
+					self.$('.immich-status-text').text( __( 'Request failed.', 'immich-media-picker' ) );
 					self.loading = false;
 				},
 			});
@@ -276,7 +279,7 @@
 			this.updateButtons();
 
 			if ( ! items.length ) {
-				$grid.html('<p class="immich-no-results">No results found.</p>');
+				$grid.html('<p class="immich-no-results">' + _.escape( __( 'No results found.', 'immich-media-picker' ) ) + '</p>');
 				return;
 			}
 
@@ -314,18 +317,24 @@
 
 		updateButtons: function () {
 			var count = Object.keys(this.selected).length;
-			this.$('.immich-use-btn').prop('disabled', count === 0)
-				.text(count > 1 ? 'Use ' + count + ' Selected' : 'Use Selected');
-			this.$('.immich-copy-btn').prop('disabled', count === 0)
-				.text(count > 1 ? 'Copy ' + count + ' Selected' : 'Copy Selected');
+			var useLabel = count > 1
+				/* translators: %d: number of selected items */
+				? sprintf( __( 'Use %d Selected', 'immich-media-picker' ), count )
+				: __( 'Use Selected', 'immich-media-picker' );
+			var copyLabel = count > 1
+				/* translators: %d: number of selected items */
+				? sprintf( __( 'Copy %d Selected', 'immich-media-picker' ), count )
+				: __( 'Copy Selected', 'immich-media-picker' );
+			this.$('.immich-use-btn').prop('disabled', count === 0).text(useLabel);
+			this.$('.immich-copy-btn').prop('disabled', count === 0).text(copyLabel);
 		},
 
 		onUseClick: function () {
-			this._runAction('immich_use', this.$('.immich-use-btn'), 'Adding');
+			this._runAction('immich_use', this.$('.immich-use-btn'), __( 'Adding', 'immich-media-picker' ));
 		},
 
 		onCopyClick: function () {
-			this._runAction('immich_import', this.$('.immich-copy-btn'), 'Copying');
+			this._runAction('immich_import', this.$('.immich-copy-btn'), __( 'Copying', 'immich-media-picker' ));
 		},
 
 		_runAction: function (action, $progressBtn, verb) {
@@ -334,7 +343,8 @@
 			if ( ! ids.length ) return;
 
 			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', true);
-			$progressBtn.text(verb + '...');
+			/* translators: %s: action verb (e.g. "Adding", "Copying") */
+			$progressBtn.text( sprintf( __( '%s\u2026', 'immich-media-picker' ), verb ) );
 
 			var succeeded = 0;
 			var failed = 0;
@@ -346,7 +356,8 @@
 					return;
 				}
 
-				$progressBtn.text(verb + ' ' + (index + 1) + ' of ' + total + '...');
+				/* translators: 1: action verb, 2: current item number, 3: total items */
+				$progressBtn.text( sprintf( __( '%1$s %2$d of %3$d\u2026', 'immich-media-picker' ), verb, index + 1, total ) );
 
 				$.ajax({
 					url: config.ajaxUrl,
@@ -390,9 +401,11 @@
 
 		_onActionComplete: function (succeeded, failed, verb) {
 			if ( failed > 0 ) {
-				this.$('.immich-status-text').text(succeeded + ' ' + verb.toLowerCase() + ', ' + failed + ' failed.');
+				/* translators: 1: number succeeded, 2: action verb (lowercase), 3: number failed */
+				this.$('.immich-status-text').text( sprintf( __( '%1$d %2$s, %3$d failed.', 'immich-media-picker' ), succeeded, verb.toLowerCase(), failed ) );
 			} else {
-				this.$('.immich-status-text').text(succeeded + ' photo(s) ' + verb.toLowerCase() + '.');
+				/* translators: 1: number of photos, 2: action verb (lowercase) */
+				this.$('.immich-status-text').text( sprintf( __( '%1$d photo(s) %2$s.', 'immich-media-picker' ), succeeded, verb.toLowerCase() ) );
 			}
 
 			this.selected = {};
@@ -575,7 +588,7 @@
 			this.on( 'router:render:browse', function ( routerView ) {
 				routerView.set({
 					browse: {
-						text: wp.media.view.l10n.mediaLibraryTitle || 'Media Library',
+						text: wp.media.view.l10n.mediaLibraryTitle || __( 'Media Library', 'immich-media-picker' ),
 						priority: 40,
 					},
 					immich: {
