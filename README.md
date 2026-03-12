@@ -1,4 +1,4 @@
-# Immich Media Picker
+# Media Picker for Immich
 
 A WordPress plugin that adds an **Immich** tab to the WordPress media picker and the Media Library, letting you use photos and videos from your [Immich](https://immich.app/) server in WordPress — either proxied directly or imported into the media library.
 
@@ -23,7 +23,7 @@ A WordPress plugin that adds an **Immich** tab to the WordPress media picker and
 
 ## Installation
 
-1. Download or clone this repository into `wp-content/plugins/immich-media-picker/`
+1. Download or clone this repository into `wp-content/plugins/media-picker-for-immich/`
 2. Activate the plugin in **Plugins > Installed Plugins**
 3. Go to **Settings > Immich** and enter your Immich server URL (e.g. `http://192.168.1.100:2283`)
 

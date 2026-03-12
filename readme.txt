@@ -1,4 +1,4 @@
-=== Immich Media Picker ===
+=== Media Picker for Immich ===
 Contributors: donncha
 Tags: immich, media, photos, self-hosted, gallery
 Requires at least: 6.4
@@ -30,7 +30,7 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
 
 == Installation ==
 
-1. Upload the `immich-media-picker` folder to `wp-content/plugins/`.
+1. Upload the `media-picker-for-immich` folder to `wp-content/plugins/`.
 2. Activate the plugin through the "Plugins" menu in WordPress.
 3. Go to **Settings > Immich** and enter your Immich server URL and API key.
 4. Generate an API key from the Immich web UI under **Account Settings > API Keys**.

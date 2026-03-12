@@ -1,12 +1,12 @@
 <?php
 /**
- * Plugin Name: Immich Media Picker
+ * Plugin Name: Media Picker for Immich
  * Description: Use photos and videos from your Immich server in WordPress without copying files, or import them into the media library.
  * Version: 0.1.0
  * Requires at least: 6.4
  * Requires PHP: 8.0
  * Author: Donncha
- * Text Domain: immich-media-picker
+ * Text Domain: media-picker-for-immich
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  */
@@ -49,10 +49,10 @@ class Immich_Media_Picker {
 
 	public function add_settings_page(): void {
 		add_options_page(
-			__( 'Immich Settings', 'immich-media-picker' ),
-			__( 'Immich', 'immich-media-picker' ),
+			__( 'Immich Settings', 'media-picker-for-immich' ),
+			__( 'Immich', 'media-picker-for-immich' ),
 			'manage_options',
-			'immich-media-picker',
+			'media-picker-for-immich',
 			array( $this, 'render_settings_page' )
 		);
 	}
@@ -75,47 +75,47 @@ class Immich_Media_Picker {
 
 		add_settings_section(
 			'immich_main',
-			__( 'Immich Server', 'immich-media-picker' ),
+			__( 'Immich Server', 'media-picker-for-immich' ),
 			'__return_null',
-			'immich-media-picker'
+			'media-picker-for-immich'
 		);
 
 		add_settings_field(
 			'immich_api_url',
-			__( 'API URL', 'immich-media-picker' ),
+			__( 'API URL', 'media-picker-for-immich' ),
 			array( $this, 'render_api_url_field' ),
-			'immich-media-picker',
+			'media-picker-for-immich',
 			'immich_main'
 		);
 
 		add_settings_field(
 			'immich_api_key',
-			__( 'Site-wide API Key', 'immich-media-picker' ),
+			__( 'Site-wide API Key', 'media-picker-for-immich' ),
 			array( $this, 'render_api_key_field' ),
-			'immich-media-picker',
+			'media-picker-for-immich',
 			'immich_main'
 		);
 
 		add_settings_section(
 			'immich_cache',
-			__( 'Cache', 'immich-media-picker' ),
+			__( 'Cache', 'media-picker-for-immich' ),
 			array( $this, 'render_cache_section' ),
-			'immich-media-picker'
+			'media-picker-for-immich'
 		);
 
 		add_settings_field(
 			'immich_cache_gc',
-			__( 'Cache Cleanup', 'immich-media-picker' ),
+			__( 'Cache Cleanup', 'media-picker-for-immich' ),
 			array( $this, 'render_cache_gc_field' ),
-			'immich-media-picker',
+			'media-picker-for-immich',
 			'immich_cache'
 		);
 
 		add_settings_field(
 			'immich_cache_ttl',
-			__( 'Cache Lifetime', 'immich-media-picker' ),
+			__( 'Cache Lifetime', 'media-picker-for-immich' ),
 			array( $this, 'render_cache_ttl_field' ),
-			'immich-media-picker',
+			'media-picker-for-immich',
 			'immich_cache'
 		);
 	}
@@ -131,7 +131,7 @@ class Immich_Media_Picker {
 			add_settings_error(
 				'immich_settings',
 				'invalid_api_url',
-				__( 'The API URL you entered is not valid. The previous URL has been kept.', 'immich-media-picker' ),
+				__( 'The API URL you entered is not valid. The previous URL has been kept.', 'media-picker-for-immich' ),
 				'error'
 			);
 			$api_url = $existing['api_url'] ?? '';
@@ -172,7 +172,7 @@ class Immich_Media_Picker {
 			'<input type="password" name="immich_settings[api_key]" value="%s" class="regular-text" />',
 			esc_attr( $value )
 		);
-		echo '<p class="description">' . esc_html__( 'When set, all users will use this key. Leave empty to allow per-user keys.', 'immich-media-picker' ) . '</p>';
+		echo '<p class="description">' . esc_html__( 'When set, all users will use this key. Leave empty to allow per-user keys.', 'media-picker-for-immich' ) . '</p>';
 	}
 
 	public function render_cache_section(): void {
@@ -181,7 +181,7 @@ class Immich_Media_Picker {
 		if ( ! $writable ) {
 			printf(
 				'<div class="notice notice-error inline"><p>%s <code>%s</code></p></div>',
-				esc_html__( 'The cache directory is not writable. Proxied media will not be cached. Please check permissions for:', 'immich-media-picker' ),
+				esc_html__( 'The cache directory is not writable. Proxied media will not be cached. Please check permissions for:', 'media-picker-for-immich' ),
 				esc_html( $cache_dir )
 			);
 		}
@@ -193,7 +193,7 @@ class Immich_Media_Picker {
 		printf(
 			'<label><input type="checkbox" name="immich_settings[cache_gc]" value="1" %s /> %s</label>',
 			checked( $checked, true, false ),
-			esc_html__( 'Automatically delete cached files after the lifetime below.', 'immich-media-picker' )
+			esc_html__( 'Automatically delete cached files after the lifetime below.', 'media-picker-for-immich' )
 		);
 	}
 
@@ -203,7 +203,7 @@ class Immich_Media_Picker {
 		printf(
 			'<input type="number" name="immich_settings[cache_ttl]" value="%s" min="1" class="small-text" /> %s',
 			esc_attr( $value ),
-			esc_html__( 'hours', 'immich-media-picker' )
+			esc_html__( 'hours', 'media-picker-for-immich' )
 		);
 	}
 
@@ -512,7 +512,7 @@ class Immich_Media_Picker {
 	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null ): array|\WP_Error {
 		$api_key = $this->get_api_key();
 		if ( '' === $api_key ) {
-			return new \WP_Error( 'no_api_key', __( 'No Immich API key configured.', 'immich-media-picker' ) );
+			return new \WP_Error( 'no_api_key', __( 'No Immich API key configured.', 'media-picker-for-immich' ) );
 		}
 
 		$url  = rtrim( $this->get_api_url(), '/' ) . $endpoint;
@@ -581,25 +581,25 @@ class Immich_Media_Picker {
 		}
 
 		wp_enqueue_script(
-			'immich-media-picker',
-			IMMICH_MEDIA_PICKER_URL . 'assets/js/immich-media-picker.js',
+			'media-picker-for-immich',
+			IMMICH_MEDIA_PICKER_URL . 'assets/js/media-picker-for-immich.js',
 			$deps,
-			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/js/immich-media-picker.js' ),
+			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/js/media-picker-for-immich.js' ),
 			true
 		);
 
-		wp_set_script_translations( 'immich-media-picker', 'immich-media-picker' );
+		wp_set_script_translations( 'media-picker-for-immich', 'media-picker-for-immich' );
 
-		wp_localize_script( 'immich-media-picker', 'ImmichMediaPicker', array(
+		wp_localize_script( 'media-picker-for-immich', 'ImmichMediaPicker', array(
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( 'immich_nonce' ),
 		) );
 
 		wp_enqueue_style(
-			'immich-media-picker',
-			plugin_dir_url( __FILE__ ) . 'assets/css/immich-media-picker.css',
+			'media-picker-for-immich',
+			plugin_dir_url( __FILE__ ) . 'assets/css/media-picker-for-immich.css',
 			array( 'media-views' ),
-			filemtime( plugin_dir_path( __FILE__ ) . 'assets/css/immich-media-picker.css' )
+			filemtime( plugin_dir_path( __FILE__ ) . 'assets/css/media-picker-for-immich.css' )
 		);
 	}
 
@@ -652,7 +652,7 @@ class Immich_Media_Picker {
 			<form action="options.php" method="post">
 				<?php
 				settings_fields( 'immich_settings_group' );
-				do_settings_sections( 'immich-media-picker' );
+				do_settings_sections( 'media-picker-for-immich' );
 				submit_button();
 				?>
 			</form>
@@ -668,14 +668,14 @@ class Immich_Media_Picker {
 		}
 		$value = get_user_meta( $user->ID, 'immich_api_key', true );
 		?>
-		<h2><?php esc_html_e( 'Immich', 'immich-media-picker' ); ?></h2>
+		<h2><?php esc_html_e( 'Immich', 'media-picker-for-immich' ); ?></h2>
 		<?php wp_nonce_field( 'immich_save_user_api_key_' . $user->ID, 'immich_user_api_key_nonce' ); ?>
 		<table class="form-table">
 			<tr>
-				<th><label for="immich_api_key"><?php esc_html_e( 'API Key', 'immich-media-picker' ); ?></label></th>
+				<th><label for="immich_api_key"><?php esc_html_e( 'API Key', 'media-picker-for-immich' ); ?></label></th>
 				<td>
 					<input type="password" name="immich_api_key" id="immich_api_key" value="<?php echo esc_attr( $value ); ?>" class="regular-text" />
-					<p class="description"><?php esc_html_e( 'Your personal Immich API key.', 'immich-media-picker' ); ?></p>
+					<p class="description"><?php esc_html_e( 'Your personal Immich API key.', 'media-picker-for-immich' ); ?></p>
 				</td>
 			</tr>
 		</table>

@@ -47,14 +47,14 @@
 		render: function () {
 			this.$el.html(
 				'<div class="immich-toolbar">' +
-					'<input type="search" class="immich-search-input" placeholder="' + _.escape( __( 'Search photos\u2026', 'immich-media-picker' ) ) + '" />' +
-					'<select class="immich-people-select"><option value="">' + _.escape( __( 'All people', 'immich-media-picker' ) ) + '</option></select>' +
-					'<button type="button" class="button immich-browse-btn">' + _.escape( __( 'Browse', 'immich-media-picker' ) ) + '</button>' +
-					'<button type="button" class="button button-primary immich-use-btn" disabled>' + _.escape( __( 'Use Selected', 'immich-media-picker' ) ) + '</button>' +
-					'<button type="button" class="button immich-copy-btn" disabled>' + _.escape( __( 'Copy Selected', 'immich-media-picker' ) ) + '</button>' +
+					'<input type="search" class="immich-search-input" placeholder="' + _.escape( __( 'Search photos\u2026', 'media-picker-for-immich' ) ) + '" />' +
+					'<select class="immich-people-select"><option value="">' + _.escape( __( 'All people', 'media-picker-for-immich' ) ) + '</option></select>' +
+					'<button type="button" class="button immich-browse-btn">' + _.escape( __( 'Browse', 'media-picker-for-immich' ) ) + '</button>' +
+					'<button type="button" class="button button-primary immich-use-btn" disabled>' + _.escape( __( 'Use Selected', 'media-picker-for-immich' ) ) + '</button>' +
+					'<button type="button" class="button immich-copy-btn" disabled>' + _.escape( __( 'Copy Selected', 'media-picker-for-immich' ) ) + '</button>' +
 				'</div>' +
 				'<div class="immich-grid"></div>' +
-				'<div class="immich-used-divider" style="display:none;"><span>' + _.escape( __( 'Previously added', 'immich-media-picker' ) ) + '</span></div>' +
+				'<div class="immich-used-divider" style="display:none;"><span>' + _.escape( __( 'Previously added', 'media-picker-for-immich' ) ) + '</span></div>' +
 				'<div class="immich-used-grid"></div>' +
 				'<div class="immich-status"><span class="spinner"></span><span class="immich-status-text"></span></div>'
 			);
@@ -115,9 +115,9 @@
 			this.loading = true;
 			this.$('.spinner').addClass('is-active');
 			if ( page === 1 ) {
-				this.$('.immich-status-text').text( __( 'Loading latest photos\u2026', 'immich-media-picker' ) );
+				this.$('.immich-status-text').text( __( 'Loading latest photos\u2026', 'media-picker-for-immich' ) );
 			} else {
-				this.$('.immich-status-text').text( __( 'Loading more\u2026', 'immich-media-picker' ) );
+				this.$('.immich-status-text').text( __( 'Loading more\u2026', 'media-picker-for-immich' ) );
 			}
 
 			$.ajax({
@@ -135,7 +135,7 @@
 					self.loading = false;
 
 					if ( ! resp.success ) {
-						self.$('.immich-status-text').text( __( 'Failed to load photos.', 'immich-media-picker' ) );
+						self.$('.immich-status-text').text( __( 'Failed to load photos.', 'media-picker-for-immich' ) );
 						return;
 					}
 
@@ -150,7 +150,7 @@
 				},
 				error: function () {
 					self.$('.spinner').removeClass('is-active');
-					self.$('.immich-status-text').text( __( 'Request failed.', 'immich-media-picker' ) );
+					self.$('.immich-status-text').text( __( 'Request failed.', 'media-picker-for-immich' ) );
 					self.loading = false;
 				},
 			});
@@ -236,9 +236,9 @@
 
 			this.$('.spinner').addClass('is-active');
 			if ( ! append ) {
-				this.$('.immich-status-text').text( __( 'Searching\u2026', 'immich-media-picker' ) );
+				this.$('.immich-status-text').text( __( 'Searching\u2026', 'media-picker-for-immich' ) );
 			} else {
-				this.$('.immich-status-text').text( __( 'Loading more\u2026', 'immich-media-picker' ) );
+				this.$('.immich-status-text').text( __( 'Loading more\u2026', 'media-picker-for-immich' ) );
 			}
 
 			$.ajax({
@@ -252,7 +252,7 @@
 					self.loading = false;
 
 					if ( ! resp.success ) {
-						self.$('.immich-status-text').text( __( 'Search failed. Please try again.', 'immich-media-picker' ) );
+						self.$('.immich-status-text').text( __( 'Search failed. Please try again.', 'media-picker-for-immich' ) );
 						return;
 					}
 
@@ -267,7 +267,7 @@
 				},
 				error: function () {
 					self.$('.spinner').removeClass('is-active');
-					self.$('.immich-status-text').text( __( 'Request failed.', 'immich-media-picker' ) );
+					self.$('.immich-status-text').text( __( 'Request failed.', 'media-picker-for-immich' ) );
 					self.loading = false;
 				},
 			});
@@ -279,7 +279,7 @@
 			this.updateButtons();
 
 			if ( ! items.length ) {
-				$grid.html('<p class="immich-no-results">' + _.escape( __( 'No results found.', 'immich-media-picker' ) ) + '</p>');
+				$grid.html('<p class="immich-no-results">' + _.escape( __( 'No results found.', 'media-picker-for-immich' ) ) + '</p>');
 				return;
 			}
 
@@ -319,22 +319,22 @@
 			var count = Object.keys(this.selected).length;
 			var useLabel = count > 1
 				/* translators: %d: number of selected items */
-				? sprintf( __( 'Use %d Selected', 'immich-media-picker' ), count )
-				: __( 'Use Selected', 'immich-media-picker' );
+				? sprintf( __( 'Use %d Selected', 'media-picker-for-immich' ), count )
+				: __( 'Use Selected', 'media-picker-for-immich' );
 			var copyLabel = count > 1
 				/* translators: %d: number of selected items */
-				? sprintf( __( 'Copy %d Selected', 'immich-media-picker' ), count )
-				: __( 'Copy Selected', 'immich-media-picker' );
+				? sprintf( __( 'Copy %d Selected', 'media-picker-for-immich' ), count )
+				: __( 'Copy Selected', 'media-picker-for-immich' );
 			this.$('.immich-use-btn').prop('disabled', count === 0).text(useLabel);
 			this.$('.immich-copy-btn').prop('disabled', count === 0).text(copyLabel);
 		},
 
 		onUseClick: function () {
-			this._runAction('immich_use', this.$('.immich-use-btn'), __( 'Adding', 'immich-media-picker' ));
+			this._runAction('immich_use', this.$('.immich-use-btn'), __( 'Adding', 'media-picker-for-immich' ));
 		},
 
 		onCopyClick: function () {
-			this._runAction('immich_import', this.$('.immich-copy-btn'), __( 'Copying', 'immich-media-picker' ));
+			this._runAction('immich_import', this.$('.immich-copy-btn'), __( 'Copying', 'media-picker-for-immich' ));
 		},
 
 		_runAction: function (action, $progressBtn, verb) {
@@ -344,7 +344,7 @@
 
 			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', true);
 			/* translators: %s: action verb (e.g. "Adding", "Copying") */
-			$progressBtn.text( sprintf( __( '%s\u2026', 'immich-media-picker' ), verb ) );
+			$progressBtn.text( sprintf( __( '%s\u2026', 'media-picker-for-immich' ), verb ) );
 
 			var succeeded = 0;
 			var failed = 0;
@@ -357,7 +357,7 @@
 				}
 
 				/* translators: 1: action verb, 2: current item number, 3: total items */
-				$progressBtn.text( sprintf( __( '%1$s %2$d of %3$d\u2026', 'immich-media-picker' ), verb, index + 1, total ) );
+				$progressBtn.text( sprintf( __( '%1$s %2$d of %3$d\u2026', 'media-picker-for-immich' ), verb, index + 1, total ) );
 
 				$.ajax({
 					url: config.ajaxUrl,
@@ -402,10 +402,10 @@
 		_onActionComplete: function (succeeded, failed, verb) {
 			if ( failed > 0 ) {
 				/* translators: 1: number succeeded, 2: action verb (lowercase), 3: number failed */
-				this.$('.immich-status-text').text( sprintf( __( '%1$d %2$s, %3$d failed.', 'immich-media-picker' ), succeeded, verb.toLowerCase(), failed ) );
+				this.$('.immich-status-text').text( sprintf( __( '%1$d %2$s, %3$d failed.', 'media-picker-for-immich' ), succeeded, verb.toLowerCase(), failed ) );
 			} else {
 				/* translators: 1: number of photos, 2: action verb (lowercase) */
-				this.$('.immich-status-text').text( sprintf( __( '%1$d photo(s) %2$s.', 'immich-media-picker' ), succeeded, verb.toLowerCase() ) );
+				this.$('.immich-status-text').text( sprintf( __( '%1$d photo(s) %2$s.', 'media-picker-for-immich' ), succeeded, verb.toLowerCase() ) );
 			}
 
 			this.selected = {};
@@ -588,7 +588,7 @@
 			this.on( 'router:render:browse', function ( routerView ) {
 				routerView.set({
 					browse: {
-						text: wp.media.view.l10n.mediaLibraryTitle || __( 'Media Library', 'immich-media-picker' ),
+						text: wp.media.view.l10n.mediaLibraryTitle || __( 'Media Library', 'media-picker-for-immich' ),
 						priority: 40,
 					},
 					immich: {
