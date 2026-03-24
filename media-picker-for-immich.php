@@ -123,7 +123,7 @@ class Immich_Media_Picker {
 	public function sanitize_settings( array $input ): array {
 		$existing = get_option( 'immich_settings', array() );
 
-		$api_key = sanitize_text_field( $input['api_key'] ?? '' );
+		$api_key = trim( wp_unslash( $input['api_key'] ?? '' ) );
 
 		$raw_url = $input['api_url'] ?? '';
 		$api_url = esc_url_raw( $raw_url );
@@ -176,7 +176,7 @@ class Immich_Media_Picker {
 	}
 
 	public function render_cache_section(): void {
-		$cache_dir = WP_CONTENT_DIR . '/cache/immich';
+		$cache_dir = $this->get_cache_root();
 		$writable  = wp_mkdir_p( $cache_dir ) && wp_is_writable( $cache_dir );
 		if ( ! $writable ) {
 			printf(
@@ -217,7 +217,7 @@ class Immich_Media_Picker {
 		}
 
 		$ttl_seconds = ( (int) ( $settings['cache_ttl'] ?? 24 ) ) * HOUR_IN_SECONDS;
-		$cache_root  = WP_CONTENT_DIR . '/cache/immich';
+		$cache_root  = $this->get_cache_root();
 
 		if ( ! is_dir( $cache_root ) ) {
 			return;
@@ -272,8 +272,9 @@ class Immich_Media_Picker {
 
 	/**
 	 * Public proxy endpoint — intentionally unauthenticated so proxied images
-	 * work in published posts for anonymous visitors. The Immich API key is
-	 * never exposed; it stays server-side. UUIDs are validated but not secret.
+	 * work in published posts for anonymous visitors. Only assets that have a
+	 * corresponding WordPress attachment (created via "Use" or "Copy") are
+	 * served. The Immich API key is never exposed; it stays server-side.
 	 *
 	 * Assets are cached locally on first request. Concurrent requests for the
 	 * same asset block on a file lock so only one upstream fetch occurs.
@@ -294,6 +295,21 @@ class Immich_Media_Picker {
 			status_header( 400 );
 			exit( 'Invalid ID.' );
 		}
+
+		// Only proxy assets that have been explicitly added via the plugin.
+		$attachments = get_posts( array(
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'posts_per_page' => 1,
+			'meta_key'       => '_immich_asset_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+			'meta_value'     => $id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
+			'fields'         => 'ids',
+		) );
+		if ( empty( $attachments ) ) {
+			status_header( 404 );
+			exit( 'Asset not found.' );
+		}
+		$author_id = (int) get_post_field( 'post_author', $attachments[0] );
 
 		$allowed_types = array(
 			'thumbnail' => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
@@ -327,20 +343,6 @@ class Immich_Media_Picker {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 			$content_type = file_get_contents( $paths['meta'] );
 			$this->serve_cached_asset( $paths['file'], $content_type, $type );
-		}
-
-		// Look up the attachment author so we use their API key, not the viewer's.
-		$author_id   = 0;
-		$attachments = get_posts( array(
-			'post_type'      => 'attachment',
-			'post_status'    => 'inherit',
-			'posts_per_page' => 1,
-			'meta_key'       => '_immich_asset_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
-			'meta_value'     => $id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
-			'fields'         => 'ids',
-		) );
-		if ( ! empty( $attachments ) ) {
-			$author_id = (int) get_post_field( 'post_author', $attachments[0] );
 		}
 
 		$api_key = $this->get_api_key( $author_id );
@@ -412,10 +414,15 @@ class Immich_Media_Picker {
 	}
 
 	/**
-	 * Return cache file paths for a given proxy type and asset ID.
+	 * Return the root cache directory inside the uploads folder.
 	 */
+	private function get_cache_root(): string {
+		$upload_dir = wp_upload_dir();
+		return $upload_dir['basedir'] . '/immich-cache';
+	}
+
 	private function get_cache_paths( string $type, string $id ): array {
-		$cache_dir = WP_CONTENT_DIR . '/cache/immich/' . $type;
+		$cache_dir = $this->get_cache_root() . '/' . $type;
 		wp_mkdir_p( $cache_dir );
 		return array(
 			'file' => $cache_dir . '/' . $id,
@@ -695,7 +702,7 @@ class Immich_Media_Picker {
 		if ( ! current_user_can( 'edit_user', $user_id ) ) {
 			return;
 		}
-		$key = sanitize_text_field( wp_unslash( $_POST['immich_api_key'] ?? '' ) );
+		$key = trim( wp_unslash( $_POST['immich_api_key'] ?? '' ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- API keys may contain characters that sanitize_text_field would strip
 		update_user_meta( $user_id, 'immich_api_key', $key );
 	}
 

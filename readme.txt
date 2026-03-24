@@ -68,6 +68,26 @@ Yes. Posts containing proxied Immich images automatically get a lightbox. Clicki
 1. The Immich tab in the WordPress media picker, showing recent photos with search and people filter.
 2. The Immich settings page where you configure your server URL and API key.
 
+== External services ==
+
+This plugin connects to a self-hosted [Immich](https://immich.app/) server that you configure in **Settings > Immich**. Immich is a self-hosted photo and video management solution — it runs on your own infrastructure and is not a third-party cloud service, but the connection is disclosed here for transparency.
+
+= What data is sent and when =
+
+* **Browsing and searching:** When a logged-in WordPress user opens the Immich media picker or searches for photos, the plugin sends API requests (search queries, page numbers, and person filter IDs) to your Immich server.
+* **Importing or using media:** When a user selects an asset to import or use, the plugin fetches the original file or metadata from the Immich server using the asset's UUID.
+* **Proxying media to visitors:** When a site visitor views a page containing Immich-proxied images or videos, WordPress fetches the media from your Immich server on their behalf. Visitor data is not sent to Immich — only the stored asset UUID and your API key are used server-side.
+
+All communication uses the API key you configure in WordPress. The API key is never exposed to browsers.
+
+= Immich project links =
+
+* [Immich website](https://immich.app/)
+* [Immich privacy policy](https://immich.app/privacy-policy)
+* [Immich license (AGPL-3.0)](https://github.com/immich-app/immich/blob/main/LICENSE)
+
+Since Immich is self-hosted, the terms of use and privacy practices are determined by whoever operates the Immich server you connect to.
+
 == Changelog ==
 
 = 0.1.0 =
