@@ -871,11 +871,17 @@ class Immich_Media_Picker {
 		$page = absint( $_GET['page'] ?? 1 ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
 		$page = max( 1, $page );
 
-		$response = $this->api_request( '/api/search/metadata', 'POST', array(
+		$body       = array(
 			'size'  => 50,
 			'page'  => $page,
 			'order' => 'desc',
-		) );
+		);
+		$asset_type = sanitize_text_field( wp_unslash( $_GET['assetType'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
+		if ( in_array( $asset_type, array( 'IMAGE', 'VIDEO' ), true ) ) {
+			$body['type'] = $asset_type;
+		}
+
+		$response = $this->api_request( '/api/search/metadata', 'POST', $body );
 
 		if ( is_wp_error( $response ) ) {
 			wp_send_json_error( $response->get_error_message() );
@@ -913,15 +919,23 @@ class Immich_Media_Picker {
 			array_map( 'sanitize_text_field', isset( $_POST['personIds'] ) ? (array) wp_unslash( $_POST['personIds'] ) : array() ), // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
 			fn( $id ) => preg_match( $uuid_pattern, $id )
 		);
+		$asset_type   = sanitize_text_field( wp_unslash( $_POST['assetType'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
+		$asset_type   = in_array( $asset_type, array( 'IMAGE', 'VIDEO' ), true ) ? $asset_type : '';
 
 		if ( '' !== $query ) {
 			$body = array( 'query' => $query, 'size' => 50, 'page' => $page );
 			if ( ! empty( $person_ids ) ) {
 				$body['personIds'] = $person_ids;
 			}
+			if ( '' !== $asset_type ) {
+				$body['type'] = $asset_type;
+			}
 			$response = $this->api_request( '/api/search/smart', 'POST', $body );
 		} elseif ( ! empty( $person_ids ) ) {
-			$body     = array( 'personIds' => $person_ids, 'size' => 50, 'page' => $page );
+			$body = array( 'personIds' => $person_ids, 'size' => 50, 'page' => $page );
+			if ( '' !== $asset_type ) {
+				$body['type'] = $asset_type;
+			}
 			$response = $this->api_request( '/api/search/metadata', 'POST', $body );
 		} else {
 			wp_send_json_success( array( 'items' => array(), 'nextPage' => null ) );
