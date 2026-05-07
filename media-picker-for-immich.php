@@ -66,13 +66,65 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_import', array( $this, 'ajax_import' ) );
 		add_action( 'wp_ajax_immich_use', array( $this, 'ajax_use' ) );
 		add_action( 'wp_ajax_immich_used_assets', array( $this, 'ajax_used_assets' ) );
+		add_action( 'wp_ajax_immich_save_picker_split', array( $this, 'ajax_save_picker_split' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
+		add_action( 'init', array( $this, 'maybe_schedule_add_mode_upgrade' ) );
+		add_action( 'immich_upgrade_add_mode', array( $this, 'run_add_mode_upgrade' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
 		add_filter( 'the_content', array( $this, 'maybe_enqueue_lightbox' ) );
 		add_action( 'immich_cache_gc', array( $this, 'run_cache_gc' ) );
+	}
+
+	/**
+	 * Schedule a one-shot WP-Cron event to backfill _immich_add_mode meta on
+	 * existing Immich-tracked attachments. Idempotent: only runs while the
+	 * upgrade option is unset and no event is already pending.
+	 */
+	public function maybe_schedule_add_mode_upgrade(): void {
+		if ( get_option( 'immich_add_mode_upgrade_done' ) ) {
+			return;
+		}
+		if ( wp_next_scheduled( 'immich_upgrade_add_mode' ) ) {
+			return;
+		}
+		wp_schedule_single_event( time() + 5, 'immich_upgrade_add_mode' );
+	}
+
+	public function run_add_mode_upgrade(): void {
+		$batch_size = 200;
+		$query      = new \WP_Query( array(
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'posts_per_page' => $batch_size,
+			'fields'         => 'ids',
+			// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- one-shot upgrade
+			'meta_query'     => array(
+				'relation' => 'AND',
+				array(
+					'key'     => '_immich_asset_id',
+					'compare' => 'EXISTS',
+				),
+				array(
+					'key'     => '_immich_add_mode',
+					'compare' => 'NOT EXISTS',
+				),
+			),
+		) );
+
+		foreach ( $query->posts as $attach_id ) {
+			$file = get_post_meta( $attach_id, '_wp_attached_file', true );
+			$mode = $file ? 'copy' : 'select';
+			update_post_meta( $attach_id, '_immich_add_mode', $mode );
+		}
+
+		if ( $query->found_posts > $batch_size ) {
+			wp_schedule_single_event( time() + 5, 'immich_upgrade_add_mode' );
+		} else {
+			update_option( 'immich_add_mode_upgrade_done', 1, false );
+		}
 	}
 
 	public function add_settings_page(): void {
@@ -627,8 +679,9 @@ class Immich_Media_Picker {
 		wp_set_script_translations( 'media-picker-for-immich', 'media-picker-for-immich' );
 
 		wp_localize_script( 'media-picker-for-immich', 'ImmichMediaPicker', array(
-			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
-			'nonce'   => wp_create_nonce( 'immich_nonce' ),
+			'ajaxUrl'  => admin_url( 'admin-ajax.php' ),
+			'nonce'    => wp_create_nonce( 'immich_nonce' ),
+			'splitPct' => $this->get_picker_split_pct( get_current_user_id() ),
 		) );
 
 		wp_enqueue_style(
@@ -1050,6 +1103,8 @@ class Immich_Media_Picker {
 			return;
 		}
 
+		update_post_meta( $attach_id, '_immich_add_mode', 'copy' );
+
 		require_once ABSPATH . 'wp-admin/includes/image.php';
 		$metadata = wp_generate_attachment_metadata( $attach_id, $dest_path );
 		wp_update_attachment_metadata( $attach_id, $metadata );
@@ -1116,6 +1171,7 @@ class Immich_Media_Picker {
 
 		update_post_meta( $attach_id, '_immich_asset_id', $id );
 		update_post_meta( $attach_id, '_immich_asset_type', $asset_type );
+		update_post_meta( $attach_id, '_immich_add_mode', 'select' );
 
 		$metadata = array( 'file' => 'immich-proxy/' . $id );
 		if ( $width > 0 && $height > 0 ) {
@@ -1149,6 +1205,34 @@ class Immich_Media_Picker {
 		wp_send_json_success( array( 'attachmentId' => $attach_id ) );
 	}
 
+	/**
+	 * Read the picker's saved split percentage (live grid % of vertical space).
+	 * Defaults to 70 when the user has no saved preference. Clamped 10-90.
+	 */
+	private function get_picker_split_pct( int $user_id ): int {
+		$saved = (int) get_user_meta( $user_id, '_immich_picker_split_pct', true );
+		if ( $saved < 10 || $saved > 90 ) {
+			return 70;
+		}
+		return $saved;
+	}
+
+	public function ajax_save_picker_split(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
+		$pct = (int) ( $_POST['pct'] ?? 0 );
+		if ( $pct < 10 || $pct > 90 ) {
+			wp_send_json_error( 'Out of range.' );
+			return;
+		}
+
+		update_user_meta( get_current_user_id(), '_immich_picker_split_pct', $pct );
+		wp_send_json_success( array( 'splitPct' => $pct ) );
+	}
+
 	public function ajax_used_assets(): void {
 		if ( ! $this->verify_ajax_request() ) {
 			return;
@@ -1176,10 +1260,12 @@ class Immich_Media_Picker {
 				continue;
 			}
 			$asset_type = get_post_meta( $post->ID, '_immich_asset_type', true );
+			$add_mode   = get_post_meta( $post->ID, '_immich_add_mode', true );
 			$items[]    = array(
 				'attachmentId' => $post->ID,
 				'immichId'     => $immich_id,
 				'type'         => 'VIDEO' === $asset_type ? 'VIDEO' : 'IMAGE',
+				'addMode'      => 'copy' === $add_mode ? 'copy' : 'select',
 				'title'        => $post->post_title,
 				'thumbUrl'     => home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
 			);
