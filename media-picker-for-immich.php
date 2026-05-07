@@ -798,6 +798,7 @@ class Immich_Media_Picker {
 			}
 			$result[] = array(
 				'id'       => $asset['id'],
+				'type'     => 'VIDEO' === ( $asset['type'] ?? '' ) ? 'VIDEO' : 'IMAGE',
 				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . rawurlencode( $asset['id'] ) . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
 				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
 			);
@@ -848,6 +849,7 @@ class Immich_Media_Picker {
 			}
 			$result[] = array(
 				'id'       => $asset['id'],
+				'type'     => 'VIDEO' === ( $asset['type'] ?? '' ) ? 'VIDEO' : 'IMAGE',
 				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . rawurlencode( $asset['id'] ) . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
 				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
 			);
@@ -1143,9 +1145,11 @@ class Immich_Media_Picker {
 			if ( ! $immich_id ) {
 				continue;
 			}
-			$items[] = array(
+			$asset_type = get_post_meta( $post->ID, '_immich_asset_type', true );
+			$items[]    = array(
 				'attachmentId' => $post->ID,
 				'immichId'     => $immich_id,
+				'type'         => 'VIDEO' === $asset_type ? 'VIDEO' : 'IMAGE',
 				'title'        => $post->post_title,
 				'thumbUrl'     => home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
 			);

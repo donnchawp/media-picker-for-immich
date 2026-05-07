@@ -38,10 +38,41 @@
 			this.browsing = false;
 			this.browseNextPage = null;
 			this.isManageFrame = !!(options && options.isManageFrame);
+			this.allowedTypes = this._readAllowedTypes(this.controller, this.isManageFrame);
 			this.render();
 			this.loadPeople();
 			this.loadUsedAssets();
 			this.doBrowse();
+		},
+
+		/**
+		 * Read the parent media frame's allowed media types so we can filter
+		 * out assets the caller can't use (e.g. videos when the Image block
+		 * opened the picker). Returns null when there's no constraint.
+		 */
+		_readAllowedTypes: function (controller, isManageFrame) {
+			if (isManageFrame) {
+				return null;
+			}
+			try {
+				var state = controller && controller.state && controller.state();
+				var library = state && state.get && state.get('library');
+				var type = library && library.props && library.props.get && library.props.get('type');
+				if (!type) {
+					return null;
+				}
+				return _.isArray(type) ? type : [type];
+			} catch (e) {
+				return null;
+			}
+		},
+
+		_assetMatchesAllowed: function (immichType) {
+			if (!this.allowedTypes) {
+				return true;
+			}
+			var wpType = 'VIDEO' === immichType ? 'video' : 'image';
+			return this.allowedTypes.indexOf(wpType) !== -1;
 		},
 
 		render: function () {
@@ -287,11 +318,15 @@
 		},
 
 		appendToGrid: function (items) {
+			var self = this;
 			var $grid = this.$('.immich-grid');
 
 			items.forEach(function (item) {
+				if ( ! self._assetMatchesAllowed(item.type) ) {
+					return;
+				}
 				var $thumb = $(
-					'<div class="immich-thumb" data-id="' + _.escape(item.id) + '" data-filename="' + _.escape(item.filename) + '">' +
+					'<div class="immich-thumb" data-id="' + _.escape(item.id) + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-filename="' + _.escape(item.filename) + '">' +
 						'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.filename) + '" />' +
 						'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
 					'</div>'
@@ -341,6 +376,15 @@
 			var self = this;
 			var ids = Object.keys(this.selected);
 			if ( ! ids.length ) return;
+
+			var mismatched = ids.filter(function (id) {
+				var type = self.$('.immich-thumb[data-id="' + id + '"]').data('type');
+				return type && ! self._assetMatchesAllowed(type);
+			});
+			if ( mismatched.length ) {
+				this.$('.immich-status-text').text( __( 'One or more selected assets are not allowed in this context.', 'media-picker-for-immich' ) );
+				return;
+			}
 
 			this.$('.immich-use-btn, .immich-copy-btn').prop('disabled', true);
 			/* translators: %s: action verb (e.g. "Adding", "Copying") */
@@ -445,7 +489,9 @@
 					self.usedLoading = false;
 					if ( ! resp.success ) return;
 
-					var items = resp.data.items || [];
+					var items = (resp.data.items || []).filter(function (item) {
+						return self._assetMatchesAllowed(item.type);
+					});
 					self.usedNextPage = resp.data.nextPage || null;
 
 					if ( items.length > 0 ) {
@@ -458,7 +504,7 @@
 					items.forEach(function (item) {
 						var isSelected = selection && !!selection.get(item.attachmentId);
 						var $thumb = $(
-							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '">' +
+							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '" data-type="' + _.escape(item.type || 'IMAGE') + '">' +
 								'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.title) + '" />' +
 								'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
 							'</div>'
