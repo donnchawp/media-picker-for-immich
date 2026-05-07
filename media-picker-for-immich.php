@@ -24,6 +24,34 @@ class Immich_Media_Picker {
 
 	private const DEFAULT_API_URL = 'http://immich-server:2283';
 
+	/**
+	 * The minimum Immich API key permissions the plugin needs to function.
+	 *
+	 * Single source of truth used by both the Settings page and the per-user
+	 * profile field; readme.txt mirrors this list manually.
+	 */
+	private function required_api_key_permissions(): array {
+		return array(
+			'asset.read'     => __( 'List asset metadata and run library searches (browse, search by query, search by person).', 'media-picker-for-immich' ),
+			'asset.view'     => __( 'Stream thumbnails and video playback through the proxy.', 'media-picker-for-immich' ),
+			'asset.download' => __( 'Fetch full-resolution originals for the proxy and the Copy/import path.', 'media-picker-for-immich' ),
+			'person.read'    => __( 'Populate the people filter dropdown and people thumbnails.', 'media-picker-for-immich' ),
+		);
+	}
+
+	private function render_required_permissions_help(): void {
+		echo '<p class="description">' . esc_html__( 'Your Immich API key must include these permissions:', 'media-picker-for-immich' ) . '</p>';
+		echo '<ul class="immich-required-perms" style="margin-top:4px;">';
+		foreach ( $this->required_api_key_permissions() as $slug => $description ) {
+			printf(
+				'<li><code>%s</code> &mdash; %s</li>',
+				esc_html( $slug ),
+				esc_html( $description )
+			);
+		}
+		echo '</ul>';
+	}
+
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_settings_page' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
@@ -173,6 +201,7 @@ class Immich_Media_Picker {
 			esc_attr( $value )
 		);
 		echo '<p class="description">' . esc_html__( 'When set, all users will use this key. Leave empty to allow per-user keys.', 'media-picker-for-immich' ) . '</p>';
+		$this->render_required_permissions_help();
 	}
 
 	public function render_cache_section(): void {
@@ -683,6 +712,7 @@ class Immich_Media_Picker {
 				<td>
 					<input type="password" name="immich_api_key" id="immich_api_key" value="<?php echo esc_attr( $value ); ?>" class="regular-text" />
 					<p class="description"><?php esc_html_e( 'Your personal Immich API key.', 'media-picker-for-immich' ); ?></p>
+					<?php $this->render_required_permissions_help(); ?>
 				</td>
 			</tr>
 		</table>

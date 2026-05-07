@@ -33,7 +33,11 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
 1. Upload the `media-picker-for-immich` folder to `wp-content/plugins/`.
 2. Activate the plugin through the "Plugins" menu in WordPress.
 3. Go to **Settings > Immich** and enter your Immich server URL and API key.
-4. Generate an API key from the Immich web UI under **Account Settings > API Keys**.
+4. Generate an API key from the Immich web UI under **Account Settings > API Keys**. The plugin needs only these permissions:
+   * `asset.read` — list asset metadata and run library searches.
+   * `asset.view` — stream thumbnails and video playback through the proxy.
+   * `asset.download` — fetch full-resolution originals for the proxy and the Copy/import path.
+   * `person.read` — populate the people filter dropdown and people thumbnails.
 
 == Frequently Asked Questions ==
 
@@ -50,6 +54,17 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
 = Does my Immich server need to be publicly accessible? =
 
 Your Immich server must be accessible from your WordPress server, but it does not need to be publicly accessible on the internet. The plugin proxies all media through WordPress, so visitors never connect to Immich directly.
+
+= Which Immich API key permissions does the plugin need? =
+
+Grant the API key these four permissions — nothing else is required:
+
+* `asset.read` — list asset metadata and run library searches (browse, search by query, search by person).
+* `asset.view` — stream thumbnails and video playback through the proxy.
+* `asset.download` — fetch full-resolution originals for the proxy and the Copy/import path.
+* `person.read` — populate the people filter dropdown and people thumbnails.
+
+The same list is shown inline on the Settings page and the per-user profile API key field for easy copy-paste into Immich.
 
 = Can different users have their own API keys? =
 

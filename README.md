@@ -39,6 +39,19 @@ If no site-wide key is configured, each user can add their own Immich API key on
 
 When per-user keys are in use, the proxy serves media using the key of the user who added the asset — so posts by different authors each pull from the correct Immich account.
 
+### Required API key permissions
+
+When you create the Immich API key, grant only these permissions — nothing else is needed:
+
+| Permission | What it enables |
+| ---------- | --------------- |
+| `asset.read` | List asset metadata and run library searches (browse, search by query, search by person). |
+| `asset.view` | Stream thumbnails and video playback through the proxy. |
+| `asset.download` | Fetch full-resolution originals for the proxy and the Copy/import path. |
+| `person.read` | Populate the people filter dropdown and people thumbnails. |
+
+The Settings page and per-user profile field display the same list inline, so you can copy the slugs straight from there into the Immich API key UI.
+
 ### Proxy cache
 
 When you use "Use Selected", proxied media is cached locally on the WordPress server the first time it's requested. Subsequent requests are served directly from disk without contacting your Immich server. Cached files are stored in `wp-content/cache/immich/` organised by type (`thumbnail/`, `original/`, `video/`).
