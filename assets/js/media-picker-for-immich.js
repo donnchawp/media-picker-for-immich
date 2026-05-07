@@ -80,6 +80,22 @@
 			return this.allowedTypes.indexOf(wpType) !== -1;
 		},
 
+		/**
+		 * If the parent frame restricts to a single media type that maps to
+		 * an Immich asset type, return that ('IMAGE' or 'VIDEO') so the
+		 * server can ask Immich for only matching assets. Returning null
+		 * means "no server-side filter" (frame is unconstrained or allows
+		 * multiple types we can't express in one Immich request).
+		 */
+		_immichRequestType: function () {
+			if (!this.allowedTypes || this.allowedTypes.length !== 1) {
+				return null;
+			}
+			if (this.allowedTypes[0] === 'image') return 'IMAGE';
+			if (this.allowedTypes[0] === 'video') return 'VIDEO';
+			return null;
+		},
+
 		render: function () {
 			var headerLabel = __( 'Previously added', 'media-picker-for-immich' );
 			var headerHelp  = __( 'Assets you have previously selected or copied from Immich. Reuse them without round-tripping to the server.', 'media-picker-for-immich' );
@@ -271,14 +287,20 @@
 				this.$('.immich-status-text').text( __( 'Loading more\u2026', 'media-picker-for-immich' ) );
 			}
 
+			var browseData = {
+				action: 'immich_browse',
+				nonce: config.nonce,
+				page: page,
+			};
+			var browseType = this._immichRequestType();
+			if (browseType) {
+				browseData.assetType = browseType;
+			}
+
 			$.ajax({
 				url: config.ajaxUrl,
 				method: 'GET',
-				data: {
-					action: 'immich_browse',
-					nonce: config.nonce,
-					page: page,
-				},
+				data: browseData,
 				dataType: 'json',
 				success: function (resp) {
 					self.$('.spinner').removeClass('is-active');
@@ -383,6 +405,10 @@
 			}
 			if (this.lastQuery) {
 				data.query = this.lastQuery;
+			}
+			var searchType = this._immichRequestType();
+			if (searchType) {
+				data.assetType = searchType;
 			}
 
 			this.$('.spinner').addClass('is-active');
