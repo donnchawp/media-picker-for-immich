@@ -177,26 +177,38 @@
 }
 
 .immich-split-handle {
-	flex: 0 0 6px;
+	flex: 0 0 10px;
 	background: #c3c4c7;
 	cursor: ns-resize;
 	outline: none;
 	position: relative;
+	z-index: 2;
 	touch-action: none;
 }
 
-.immich-split-handle::after {
+/* Visual grip — three short bars centred horizontally so the bar reads as draggable. */
+.immich-split-handle::before {
 	content: "";
 	position: absolute;
-	top: -4px;
-	bottom: -4px;
-	left: 0;
-	right: 0;
+	left: 50%;
+	top: 50%;
+	width: 32px;
+	height: 2px;
+	margin: -1px 0 0 -16px;
+	background: #fff;
+	box-shadow: 0 -3px 0 #fff, 0 3px 0 #fff;
+	opacity: 0.6;
+	pointer-events: none;
 }
 
 .immich-split-handle:hover,
 .immich-split-handle:focus-visible {
 	background: #2271b1;
+}
+
+.immich-split-handle:hover::before,
+.immich-split-handle:focus-visible::before {
+	opacity: 1;
 }
 
 .immich-used-pane {
