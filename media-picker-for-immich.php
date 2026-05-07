@@ -795,6 +795,11 @@ class Immich_Media_Picker {
 			return $url;
 		}
 
+		// Copied assets have a real local file in uploads/ — serve that, not the proxy.
+		if ( 'copy' === get_post_meta( $attachment_id, '_immich_add_mode', true ) ) {
+			return $url;
+		}
+
 		$asset_type = get_post_meta( $attachment_id, '_immich_asset_type', true );
 		if ( 'VIDEO' === $asset_type ) {
 			return home_url( '/?immich_media_proxy=video&id=' . rawurlencode( $immich_id ) );
@@ -806,6 +811,11 @@ class Immich_Media_Picker {
 	public function filter_image_downsize( $downsize, int $attachment_id, $size ) {
 		$immich_id = get_post_meta( $attachment_id, '_immich_asset_id', true );
 		if ( ! $immich_id ) {
+			return $downsize;
+		}
+
+		// Copied assets have a real local file — let core handle downsize normally.
+		if ( 'copy' === get_post_meta( $attachment_id, '_immich_add_mode', true ) ) {
 			return $downsize;
 		}
 
@@ -1103,6 +1113,11 @@ class Immich_Media_Picker {
 			return;
 		}
 
+		$raw_type   = $info['type'] ?? 'IMAGE';
+		$asset_type = in_array( $raw_type, array( 'IMAGE', 'VIDEO' ), true ) ? $raw_type : 'IMAGE';
+
+		update_post_meta( $attach_id, '_immich_asset_id', $id );
+		update_post_meta( $attach_id, '_immich_asset_type', $asset_type );
 		update_post_meta( $attach_id, '_immich_add_mode', 'copy' );
 
 		require_once ABSPATH . 'wp-admin/includes/image.php';

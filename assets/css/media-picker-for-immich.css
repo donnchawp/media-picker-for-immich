@@ -290,7 +290,6 @@
 	padding: 1px 5px;
 	border-radius: 3px;
 	letter-spacing: 0.5px;
-	pointer-events: none;
 }
 
 .immich-empty-state {
