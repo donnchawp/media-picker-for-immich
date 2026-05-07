@@ -25,6 +25,8 @@
 			'click .immich-use-btn': 'onUseClick',
 			'click .immich-copy-btn': 'onCopyClick',
 			'click .immich-used-thumb': 'onUsedThumbClick',
+			'pointerdown .immich-split-handle': 'onSplitPointerDown',
+			'keydown .immich-split-handle': 'onSplitKeyDown',
 		},
 
 		initialize: function (options) {
@@ -39,7 +41,10 @@
 			this.browseNextPage = null;
 			this.isManageFrame = !!(options && options.isManageFrame);
 			this.allowedTypes = this._readAllowedTypes(this.controller, this.isManageFrame);
+			this.usedCount = 0;
+			this.splitPct = this._clampSplit(parseInt(config.splitPct, 10) || 70);
 			this.render();
+			this._applySplit(this.splitPct);
 			this.loadPeople();
 			this.loadUsedAssets();
 			this.doBrowse();
@@ -76,6 +81,10 @@
 		},
 
 		render: function () {
+			var headerLabel = __( 'Previously added', 'media-picker-for-immich' );
+			var headerHelp  = __( 'Assets you have previously selected or copied from Immich. Reuse them without round-tripping to the server.', 'media-picker-for-immich' );
+			var handleLabel = __( 'Resize the cached assets pane', 'media-picker-for-immich' );
+
 			this.$el.html(
 				'<div class="immich-toolbar">' +
 					'<input type="search" class="immich-search-input" placeholder="' + _.escape( __( 'Search photos\u2026', 'media-picker-for-immich' ) ) + '" />' +
@@ -85,8 +94,15 @@
 					'<button type="button" class="button immich-copy-btn" disabled>' + _.escape( __( 'Copy Selected', 'media-picker-for-immich' ) ) + '</button>' +
 				'</div>' +
 				'<div class="immich-grid"></div>' +
-				'<div class="immich-used-divider" style="display:none;"><span>' + _.escape( __( 'Previously added', 'media-picker-for-immich' ) ) + '</span></div>' +
-				'<div class="immich-used-grid"></div>' +
+				'<div class="immich-split-handle" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="' + _.escape( handleLabel ) + '"></div>' +
+				'<div class="immich-used-pane">' +
+					'<div class="immich-used-header">' +
+						'<span class="immich-used-title">' + _.escape( headerLabel ) + '</span>' +
+						'<span class="immich-used-count" aria-hidden="true">0</span>' +
+						'<span class="dashicons dashicons-info-outline immich-used-info" role="img" tabindex="0" aria-label="' + _.escape( headerHelp ) + '" title="' + _.escape( headerHelp ) + '"></span>' +
+					'</div>' +
+					'<div class="immich-used-grid"></div>' +
+				'</div>' +
 				'<div class="immich-status"><span class="spinner"></span><span class="immich-status-text"></span></div>'
 			);
 
@@ -100,6 +116,110 @@
 			});
 
 			return this;
+		},
+
+		_clampSplit: function (pct) {
+			pct = Math.round(pct);
+			if (pct < 10) return 10;
+			if (pct > 90) return 90;
+			return pct;
+		},
+
+		_applySplit: function (pct) {
+			this.splitPct = this._clampSplit(pct);
+			this.$el[0].style.setProperty('--immich-live-flex', this.splitPct);
+			this.$el[0].style.setProperty('--immich-used-flex', 100 - this.splitPct);
+			this.$('.immich-split-handle').attr('aria-valuenow', this.splitPct);
+		},
+
+		_savePickerSplit: function () {
+			$.post(config.ajaxUrl, {
+				action: 'immich_save_picker_split',
+				nonce: config.nonce,
+				pct: this.splitPct,
+			});
+		},
+
+		onSplitPointerDown: function (e) {
+			var self = this;
+			var handle = e.currentTarget;
+			handle.setPointerCapture(e.pointerId);
+			e.preventDefault();
+
+			var browser = this.$el[0];
+			var rect = browser.getBoundingClientRect();
+			var toolbarH = this.$('.immich-toolbar').outerHeight() || 0;
+			var statusH = this.$('.immich-status').outerHeight() || 0;
+			var handleH = handle.offsetHeight || 0;
+			var available = rect.height - toolbarH - statusH - handleH;
+
+			if (available <= 0) {
+				return;
+			}
+
+			function onMove(ev) {
+				var y = ev.clientY - rect.top - toolbarH;
+				var pct = Math.round((y / available) * 100);
+				self._applySplit(pct);
+			}
+			function onEnd() {
+				try {
+					handle.releasePointerCapture(e.pointerId);
+				} catch (err) { /* pointer already released */ }
+				handle.removeEventListener('pointermove', onMove);
+				handle.removeEventListener('pointerup', onEnd);
+				handle.removeEventListener('pointercancel', onEnd);
+				self._savePickerSplit();
+			}
+
+			handle.addEventListener('pointermove', onMove);
+			handle.addEventListener('pointerup', onEnd);
+			handle.addEventListener('pointercancel', onEnd);
+		},
+
+		onSplitKeyDown: function (e) {
+			var step = e.shiftKey ? 10 : 5;
+			var pct = this.splitPct;
+			switch (e.key) {
+				case 'ArrowUp':
+				case 'ArrowLeft':
+					pct -= step;
+					break;
+				case 'ArrowDown':
+				case 'ArrowRight':
+					pct += step;
+					break;
+				case 'Home':
+					pct = 10;
+					break;
+				case 'End':
+					pct = 90;
+					break;
+				default:
+					return;
+			}
+			e.preventDefault();
+			this._applySplit(pct);
+			this._savePickerSplit();
+		},
+
+		_modeBadgeHtml: function (addMode) {
+			var isCopy = 'copy' === addMode;
+			var label  = isCopy
+				? __( 'Copied (in Media Library)', 'media-picker-for-immich' )
+				: __( 'Selected (proxied)', 'media-picker-for-immich' );
+			var letter = isCopy ? 'C' : 'S';
+			return '<span class="immich-mode-badge" aria-label="' + _.escape(label) + '" title="' + _.escape(label) + '">' + letter + '</span>';
+		},
+
+		_renderUsedEmptyState: function () {
+			var copy = __( 'No assets yet. Assets you Select or Copy from Immich will appear here for quick reuse.', 'media-picker-for-immich' );
+			this.$('.immich-used-grid').html('<p class="immich-empty-state">' + _.escape(copy) + '</p>');
+		},
+
+		_updateUsedCount: function (delta) {
+			this.usedCount = Math.max(0, this.usedCount + delta);
+			this.$('.immich-used-count').text(this.usedCount);
 		},
 
 		loadPeople: function () {
@@ -468,7 +588,8 @@
 			if ( this.usedLoading ) return;
 			this.usedNextPage = null;
 			this.$('.immich-used-grid').empty();
-			this.$('.immich-used-divider').hide();
+			this.usedCount = 0;
+			this._updateUsedCount(0);
 			this.fetchUsedPage(1);
 		},
 
@@ -494,8 +615,12 @@
 					});
 					self.usedNextPage = resp.data.nextPage || null;
 
-					if ( items.length > 0 ) {
-						self.$('.immich-used-divider').show();
+					var $grid = self.$('.immich-used-grid');
+					$grid.find('.immich-empty-state').remove();
+
+					if ( items.length === 0 && page === 1 && self.usedCount === 0 ) {
+						self._renderUsedEmptyState();
+						return;
 					}
 
 					var selection = !self.isManageFrame &&
@@ -503,14 +628,17 @@
 						self.controller.state().get('selection');
 					items.forEach(function (item) {
 						var isSelected = selection && !!selection.get(item.attachmentId);
+						var addMode   = 'copy' === item.addMode ? 'copy' : 'select';
 						var $thumb = $(
-							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '" data-type="' + _.escape(item.type || 'IMAGE') + '">' +
+							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-add-mode="' + _.escape(addMode) + '">' +
 								'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.title) + '" />' +
 								'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
+								self._modeBadgeHtml(addMode) +
 							'</div>'
 						);
-						self.$('.immich-used-grid').append($thumb);
+						$grid.append($thumb);
 					});
+					self._updateUsedCount(items.length);
 				},
 				error: function () {
 					self.usedLoading = false;
