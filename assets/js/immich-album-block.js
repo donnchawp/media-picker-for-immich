@@ -23,6 +23,9 @@
         } );
         frame.once( 'immich:album-selected', function ( album ) {
             if ( album && album.id ) { onPicked( album ); }
+            // Defer close: calling frame.close() synchronously inside the event
+            // tears down the Backbone view that is still mid-dispatch. The
+            // timeout lets the current call-stack unwind first.
             setTimeout( function () { frame.close(); }, 0 );
         } );
         frame.on( 'close', function () {
