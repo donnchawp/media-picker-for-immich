@@ -24,6 +24,8 @@ class Immich_Media_Picker {
 
 	private const DEFAULT_API_URL = 'http://immich-server:2283';
 
+	private const COPY_SIZE_CHOICES = array( 'original', 'fullsize', 'preview', 'thumbnail' );
+
 	/**
 	 * The minimum Immich API key permissions the plugin needs to function.
 	 *
@@ -151,6 +153,7 @@ class Immich_Media_Picker {
 					'api_key'   => '',
 					'cache_gc'  => false,
 					'cache_ttl' => 24,
+					'copy_size' => 'original',
 				),
 			)
 		);
@@ -174,6 +177,14 @@ class Immich_Media_Picker {
 			'immich_api_key',
 			__( 'Site-wide API Key', 'media-picker-for-immich' ),
 			array( $this, 'render_api_key_field' ),
+			'media-picker-for-immich',
+			'immich_main'
+		);
+
+		add_settings_field(
+			'immich_copy_size',
+			__( 'Copy Resolution', 'media-picker-for-immich' ),
+			array( $this, 'render_copy_size_field' ),
 			'media-picker-for-immich',
 			'immich_main'
 		);
@@ -223,6 +234,11 @@ class Immich_Media_Picker {
 		$cache_ttl = absint( $input['cache_ttl'] ?? 24 );
 		$cache_ttl = max( 1, $cache_ttl );
 
+		$copy_size = $input['copy_size'] ?? 'original';
+		if ( ! in_array( $copy_size, self::COPY_SIZE_CHOICES, true ) ) {
+			$copy_size = 'original';
+		}
+
 		// Schedule or unschedule the GC cron based on the setting.
 		if ( $cache_gc && ! wp_next_scheduled( 'immich_cache_gc' ) ) {
 			wp_schedule_event( time(), 'hourly', 'immich_cache_gc' );
@@ -235,7 +251,34 @@ class Immich_Media_Picker {
 			'api_key'   => $api_key,
 			'cache_gc'  => $cache_gc,
 			'cache_ttl' => $cache_ttl,
+			'copy_size' => $copy_size,
 		);
+	}
+
+	public function render_copy_size_field(): void {
+		$settings = get_option( 'immich_settings', array() );
+		$value    = in_array( $settings['copy_size'] ?? '', self::COPY_SIZE_CHOICES, true )
+			? $settings['copy_size']
+			: 'original';
+
+		$labels = array(
+			'original'  => __( 'Original (full resolution)', 'media-picker-for-immich' ),
+			'fullsize'  => __( 'Fullsize (web-friendly version of the original; same as Original for JPEG sources)', 'media-picker-for-immich' ),
+			'preview'   => __( 'Preview (large compressed JPEG)', 'media-picker-for-immich' ),
+			'thumbnail' => __( 'Thumbnail (small)', 'media-picker-for-immich' ),
+		);
+
+		echo '<select name="immich_settings[copy_size]">';
+		foreach ( self::COPY_SIZE_CHOICES as $choice ) {
+			printf(
+				'<option value="%s"%s>%s</option>',
+				esc_attr( $choice ),
+				selected( $value, $choice, false ),
+				esc_html( $labels[ $choice ] )
+			);
+		}
+		echo '</select>';
+		echo '<p class="description">' . esc_html__( 'Resolution requested from Immich when you click Copy. Affects new copies only; previously copied assets are unchanged.', 'media-picker-for-immich' ) . '</p>';
 	}
 
 	public function render_api_url_field(): void {
@@ -360,6 +403,28 @@ class Immich_Media_Picker {
 	private function get_api_url(): string {
 		$settings = get_option( 'immich_settings', array() );
 		return $settings['api_url'] ?? self::DEFAULT_API_URL;
+	}
+
+	/**
+	 * Build the Immich endpoint that ajax_import (Copy) downloads from,
+	 * based on the configured copy_size setting.
+	 *
+	 * - 'original'  → /api/assets/{id}/original (full resolution)
+	 * - 'fullsize'  → /api/assets/{id}/thumbnail?size=fullsize
+	 * - 'preview'   → /api/assets/{id}/thumbnail?size=preview
+	 * - 'thumbnail' → /api/assets/{id}/thumbnail?size=thumbnail
+	 */
+	private function copy_endpoint_url( string $asset_id ): string {
+		$settings  = get_option( 'immich_settings', array() );
+		$copy_size = in_array( $settings['copy_size'] ?? '', self::COPY_SIZE_CHOICES, true )
+			? $settings['copy_size']
+			: 'original';
+
+		$base = rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $asset_id;
+		if ( 'original' === $copy_size ) {
+			return $base . '/original';
+		}
+		return $base . '/thumbnail?size=' . rawurlencode( $copy_size );
 	}
 
 	/**
@@ -1279,7 +1344,7 @@ class Immich_Media_Picker {
 
 		$api_key  = $this->get_api_key();
 		$tmp_file = wp_tempnam( $filename );
-		$url      = rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/original';
+		$url      = $this->copy_endpoint_url( $id );
 		$response = wp_remote_get( $url, array(
 			'headers'  => array( 'x-api-key' => $api_key ),
 			'timeout'  => 120,
