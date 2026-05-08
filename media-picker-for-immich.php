@@ -1940,16 +1940,40 @@ class Immich_Media_Picker {
 	 * @param array $attrs Block attributes.
 	 * @return string Rendered HTML.
 	 */
+	/**
+	 * Render an editor-only error notice for the album block.
+	 *
+	 * Anonymous viewers get an empty string; logged-in editors with
+	 * edit_posts capability see a diagnostic notice.
+	 *
+	 * @param \WP_Error $error The error to display.
+	 * @return string Empty string for anonymous viewers, notice div for editors.
+	 */
+	private function render_album_error_notice( \WP_Error $error ): string {
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			return '';
+		}
+		return '<div class="immich-album-error" style="border:1px solid #d63638;padding:8px;color:#d63638;">'
+			. esc_html__( 'Could not load Immich album.', 'media-picker-for-immich' )
+			. ' <code>' . esc_html( $error->get_error_message() ) . '</code>'
+			. '</div>';
+	}
+
 	public function render_album_block( array $attrs ): string {
 		$album_id = isset( $attrs['albumId'] ) ? (string) $attrs['albumId'] : '';
 		if ( '' === $album_id || ! preg_match( self::UUID_PATTERN, $album_id ) ) {
 			return '';
 		}
 
+		// Editor-only cache refresh probe.
+		if ( current_user_can( 'edit_posts' ) && ! empty( $_GET['immich_refresh'] ) ) {
+			$this->flush_album_cache( $album_id );
+		}
+
 		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
 		$payload = $this->fetch_album_assets( $album_id, $sort );
 		if ( is_wp_error( $payload ) ) {
-			return '';
+			return $this->render_album_error_notice( $payload );
 		}
 
 		$assets = $payload['assets'];
@@ -2005,7 +2029,14 @@ class Immich_Media_Picker {
 			);
 		}
 
-		return '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex">'
+		$stale_notice = '';
+		if ( ! empty( $payload['stale'] ) && current_user_can( 'edit_posts' ) ) {
+			$stale_notice = '<div class="immich-album-stale" style="background:#fcf9e8;border:1px solid #dba617;padding:6px;margin-bottom:8px;">'
+				. esc_html__( 'Showing cached version of this Immich album (Immich is unreachable).', 'media-picker-for-immich' )
+				. '</div>';
+		}
+		return $stale_notice
+			. '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex">'
 			. $children
 			. '</figure>';
 	}
@@ -2058,6 +2089,21 @@ class Immich_Media_Picker {
 	}
 
 	/**
+	 * Read a transient ignoring its expiry.
+	 *
+	 * Used as a degraded fallback when Immich is unreachable. Works only
+	 * with the default DB-backed transient store; with an external object
+	 * cache the underlying option does not exist and this returns false.
+	 *
+	 * @param string $key Transient key (without the `_transient_` prefix).
+	 * @return mixed Stored value, or false if not present.
+	 */
+	private function read_stale_transient( string $key ) {
+		$value = get_option( '_transient_' . $key, false );
+		return false === $value ? false : $value;
+	}
+
+	/**
 	 * Delete all sort-variant transients for an album.
 	 *
 	 * Wired up by the editor refresh probe in Task 11 (?immich_refresh=1).
@@ -2081,17 +2127,21 @@ class Immich_Media_Picker {
 		$key    = $this->album_cache_key( $album_id, $sort );
 		$cached = get_transient( $key );
 		if ( false !== $cached && is_array( $cached ) ) {
+			$cached['stale'] = false;
 			return $cached;
 		}
 
 		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ) );
 		if ( is_wp_error( $response ) ) {
+			$stale = $this->read_stale_transient( $key );
+			if ( false !== $stale && is_array( $stale ) ) {
+				$stale['stale'] = true;
+				return $stale;
+			}
 			return $response;
 		}
 
-		// Guard against malformed responses: a 200 without an 'assets' key
-		// (e.g., wrong content-type, partial JSON) is not a legitimate empty
-		// album. Don't poison the cache for the full TTL.
+		// Guard malformed responses (kept from Task 7).
 		if ( ! isset( $response['assets'] ) || ! is_array( $response['assets'] ) ) {
 			return new \WP_Error(
 				'immich_album_malformed',
@@ -2099,7 +2149,8 @@ class Immich_Media_Picker {
 			);
 		}
 
-		$payload = $this->prepare_album_payload( $response, $sort );
+		$payload          = $this->prepare_album_payload( $response, $sort );
+		$payload['stale'] = false;
 		set_transient( $key, $payload, $this->album_cache_ttl() );
 		return $payload;
 	}
