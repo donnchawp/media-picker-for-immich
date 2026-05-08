@@ -1946,7 +1946,8 @@ class Immich_Media_Picker {
 			return '';
 		}
 
-		$payload = $this->fetch_album_assets( $album_id );
+		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
+		$payload = $this->fetch_album_assets( $album_id, $sort );
 		if ( is_wp_error( $payload ) ) {
 			return '';
 		}
@@ -1989,22 +1990,111 @@ class Immich_Media_Picker {
 	}
 
 	/**
-	 * Fetch and prepare the asset list for an album.
+	 * Validate the sortOrder block attribute.
 	 *
-	 * No caching yet — see Task 7. No sort yet — see Task 8.
+	 * @param string $sort Raw attribute value.
+	 * @return string One of 'default', 'oldest', 'newest', 'random'.
+	 */
+	private function validate_sort( string $sort ): string {
+		$allowed = array( 'default', 'oldest', 'newest', 'random' );
+		return in_array( $sort, $allowed, true ) ? $sort : 'default';
+	}
+
+	/**
+	 * Default transient TTL for album asset lists, in seconds.
+	 *
+	 * @return int Filterable via `immich_album_cache_ttl`.
+	 */
+	private function album_cache_ttl(): int {
+		return (int) apply_filters( 'immich_album_cache_ttl', 5 * MINUTE_IN_SECONDS );
+	}
+
+	/**
+	 * Hard cap on rendered assets per block.
+	 *
+	 * @return int Filterable via `immich_album_max_assets`.
+	 */
+	private function album_max_assets(): int {
+		return max( 1, (int) apply_filters( 'immich_album_max_assets', 100 ) );
+	}
+
+	/**
+	 * Build the cache key for an album+sort variant.
+	 */
+	private function album_cache_key( string $album_id, string $sort ): string {
+		return 'immich_album_' . $album_id . '_' . $sort;
+	}
+
+	/**
+	 * Delete all sort-variant transients for an album.
+	 *
+	 * @param string $album_id UUID.
+	 */
+	private function flush_album_cache( string $album_id ): void {
+		foreach ( array( 'default', 'oldest', 'newest', 'random' ) as $sort ) {
+			delete_transient( $this->album_cache_key( $album_id, $sort ) );
+		}
+	}
+
+	/**
+	 * Fetch and prepare the asset list for an album, with caching and hard cap.
 	 *
 	 * @param string $album_id Validated UUID.
+	 * @param string $sort     Sort key (default 'default'; expanded in Task 8).
 	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
 	 */
-	private function fetch_album_assets( string $album_id ) {
+	private function fetch_album_assets( string $album_id, string $sort = 'default' ) {
+		$key    = $this->album_cache_key( $album_id, $sort );
+		$cached = get_transient( $key );
+		if ( false !== $cached && is_array( $cached ) ) {
+			return $cached;
+		}
+
 		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ) );
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
-		$assets = isset( $response['assets'] ) && is_array( $response['assets'] ) ? $response['assets'] : array();
+
+		$payload = $this->prepare_album_payload( $response, $sort );
+		set_transient( $key, $payload, $this->album_cache_ttl() );
+		return $payload;
+	}
+
+	/**
+	 * Build the cache payload from a raw Immich /api/albums/{id} response.
+	 *
+	 * Applies sort and the hard cap. Stores only the fields needed for render.
+	 *
+	 * @param array  $response Raw Immich response (must contain 'assets').
+	 * @param string $sort     Sort key.
+	 * @return array{assets: array, total_count: int, fetched_at: int}
+	 */
+	private function prepare_album_payload( array $response, string $sort ): array {
+		$raw   = isset( $response['assets'] ) && is_array( $response['assets'] ) ? $response['assets'] : array();
+		$total = count( $raw );
+
+		// Sort variants land in Task 8; for now sort='default' is a no-op.
+		$sorted = array_values( $raw );
+
+		$cap     = $this->album_max_assets();
+		$trimmed = array_slice( $sorted, 0, $cap );
+
+		// Reduce to the fields render uses.
+		$minimal = array_map(
+			function ( $a ) {
+				return array(
+					'id'               => isset( $a['id'] ) ? (string) $a['id'] : '',
+					'originalFileName' => isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '',
+					'fileCreatedAt'    => isset( $a['fileCreatedAt'] ) ? (string) $a['fileCreatedAt'] : '',
+					'type'             => isset( $a['type'] ) ? (string) $a['type'] : 'IMAGE',
+				);
+			},
+			$trimmed
+		);
+
 		return array(
-			'assets'      => array_values( $assets ),
-			'total_count' => count( $assets ),
+			'assets'      => $minimal,
+			'total_count' => $total,
 			'fetched_at'  => time(),
 		);
 	}
