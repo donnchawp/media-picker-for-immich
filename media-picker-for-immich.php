@@ -1965,6 +1965,7 @@ class Immich_Media_Picker {
 
 		$size          = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
 		$columns       = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
+		$lightbox      = ! empty( $attrs['lightbox'] );
 		$show_captions = ! empty( $attrs['showCaptions'] );
 
 		$children = '';
@@ -1973,15 +1974,35 @@ class Immich_Media_Picker {
 			if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) ) {
 				continue;
 			}
-			$url      = home_url( '/?immich_media_proxy=' . rawurlencode( $size ) . '&id=' . rawurlencode( $asset_id ) );
-			$alt      = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
-			$caption  = $show_captions && '' !== $alt
-				? '<figcaption class="wp-element-caption">' . esc_html( $alt ) . '</figcaption>'
-				: '';
-			$children .= '<figure class="wp-block-image size-large">'
-				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
-				. $caption
+			$url     = home_url( '/?immich_media_proxy=' . rawurlencode( $size ) . '&id=' . rawurlencode( $asset_id ) );
+			$alt     = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
+			$caption = $show_captions ? $alt : '';
+
+			$image_attrs = array(
+				'url'      => $url,
+				'alt'      => $alt,
+				'sizeSlug' => 'large',
+			);
+			if ( '' !== $caption ) {
+				$image_attrs['caption'] = $caption;
+			}
+			if ( $lightbox ) {
+				$image_attrs['lightbox'] = array( 'enabled' => true );
+			}
+
+			$inner_html = '<figure class="wp-block-image size-large">'
+				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" />'
+				. ( '' !== $caption ? '<figcaption class="wp-element-caption">' . esc_html( $caption ) . '</figcaption>' : '' )
 				. '</figure>';
+
+			$children .= render_block(
+				array(
+					'blockName'    => 'core/image',
+					'attrs'        => $image_attrs,
+					'innerHTML'    => $inner_html,
+					'innerContent' => array( $inner_html ),
+				)
+			);
 		}
 
 		return '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex">'
