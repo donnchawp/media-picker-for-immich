@@ -27,6 +27,7 @@
 			'click .immich-used-thumb': 'onUsedThumbClick',
 			'pointerdown .immich-split-handle': 'onSplitPointerDown',
 			'keydown .immich-split-handle': 'onSplitKeyDown',
+			'click .immich-preview-btn': 'onPreviewBtnClick',
 		},
 
 		initialize: function (options) {
@@ -217,6 +218,119 @@
 			e.preventDefault();
 			this._applySplit(pct);
 			this._savePickerSplit();
+		},
+
+		/**
+		 * Parse Immich's duration string ("0:01:23.456" or seconds) into "m:ss".
+		 */
+		_durationLabel: function (raw) {
+			if (!raw) return '';
+			var s = String(raw);
+			var totalSeconds = 0;
+			if (s.indexOf(':') !== -1) {
+				var parts = s.split(':');
+				for (var i = 0; i < parts.length; i++) {
+					totalSeconds = totalSeconds * 60 + parseFloat(parts[i] || '0');
+				}
+			} else {
+				totalSeconds = parseFloat(s);
+			}
+			if (!isFinite(totalSeconds) || totalSeconds < 0) return '';
+			totalSeconds = Math.round(totalSeconds);
+			var minutes = Math.floor(totalSeconds / 60);
+			var seconds = totalSeconds % 60;
+			return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+		},
+
+		_videoOverlayHtml: function () {
+			return '<span class="immich-video-icon dashicons dashicons-controls-play" aria-hidden="true"></span>';
+		},
+
+		_durationBadgeHtml: function (duration) {
+			var label = this._durationLabel(duration);
+			if (!label) return '';
+			return '<span class="immich-duration-badge" aria-hidden="true">' + _.escape(label) + '</span>';
+		},
+
+		_previewBtnHtml: function () {
+			var label = __( 'Preview', 'media-picker-for-immich' );
+			return '<button type="button" class="immich-preview-btn" aria-label="' + _.escape(label) + '" title="' + _.escape(label) + '"><span class="dashicons dashicons-visibility" aria-hidden="true"></span></button>';
+		},
+
+		_previewProxyUrl: function (id, mediaType) {
+			var proxyType = 'VIDEO' === mediaType ? 'video' : 'preview';
+			var sep = config.proxyUrl && config.proxyUrl.indexOf('?') !== -1 ? '&' : '?';
+			return (config.proxyUrl || '/') + sep
+				+ 'immich_media_proxy=' + encodeURIComponent(proxyType)
+				+ '&id=' + encodeURIComponent(id)
+				+ '&preview_nonce=' + encodeURIComponent(config.previewNonce || '');
+		},
+
+		onPreviewBtnClick: function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			e.stopImmediatePropagation();
+			var $tile = $(e.currentTarget).closest('.immich-thumb, .immich-used-thumb');
+			if (!$tile.length) return;
+			var assetId   = $tile.attr('data-id') || '';
+			var mediaType = $tile.attr('data-type') || 'IMAGE';
+			var filename  = $tile.attr('data-filename') || '';
+			if (!assetId) return;
+			this._openPreview(assetId, mediaType, filename);
+		},
+
+		_openPreview: function (assetId, mediaType, filename) {
+			this._closePreview();
+
+			var self = this;
+			var url = this._previewProxyUrl(assetId, mediaType);
+			var media;
+			if ('VIDEO' === mediaType) {
+				media = $('<video class="immich-preview-media" controls autoplay playsinline></video>')
+					.attr('src', url);
+			} else {
+				media = $('<img class="immich-preview-media" alt="" />').attr('src', url);
+				if (filename) {
+					media.attr('alt', filename);
+				}
+			}
+
+			var closeLabel = __( 'Close preview', 'media-picker-for-immich' );
+			var $overlay = $(
+				'<div class="immich-preview-overlay" role="dialog" aria-modal="true" tabindex="-1">' +
+					'<button type="button" class="immich-preview-close" aria-label="' + _.escape(closeLabel) + '" title="' + _.escape(closeLabel) + '"><span class="dashicons dashicons-no-alt" aria-hidden="true"></span></button>' +
+					'<div class="immich-preview-stage"></div>' +
+				'</div>'
+			);
+			$overlay.find('.immich-preview-stage').append(media);
+			this.$el.append($overlay);
+
+			$overlay.on('click', function (ev) {
+				if (ev.target === $overlay[0] || $(ev.target).closest('.immich-preview-close').length) {
+					self._closePreview();
+				}
+			});
+
+			this._previewKeyHandler = function (ev) {
+				if (ev.key === 'Escape') {
+					self._closePreview();
+				}
+			};
+			document.addEventListener('keydown', this._previewKeyHandler);
+
+			$overlay.focus();
+		},
+
+		_closePreview: function () {
+			var $overlay = this.$('.immich-preview-overlay');
+			if ($overlay.length) {
+				$overlay.find('video').each(function () { try { this.pause(); } catch (e) {} });
+				$overlay.remove();
+			}
+			if (this._previewKeyHandler) {
+				document.removeEventListener('keydown', this._previewKeyHandler);
+				this._previewKeyHandler = null;
+			}
 		},
 
 		_modeBadgeHtml: function (addMode) {
@@ -471,10 +585,14 @@
 				if ( ! self._assetMatchesAllowed(item.type) ) {
 					return;
 				}
+				var isVideo = 'VIDEO' === item.type;
 				var $thumb = $(
-					'<div class="immich-thumb" data-id="' + _.escape(item.id) + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-filename="' + _.escape(item.filename) + '">' +
+					'<div class="immich-thumb' + (isVideo ? ' is-video' : '') + '" data-id="' + _.escape(item.id) + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-filename="' + _.escape(item.filename) + '">' +
 						'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.filename) + '" />' +
+						(isVideo ? self._videoOverlayHtml() : '') +
+						(isVideo ? self._durationBadgeHtml(item.duration) : '') +
 						'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
+						self._previewBtnHtml() +
 					'</div>'
 				);
 				$grid.append($thumb);
@@ -655,11 +773,14 @@
 					items.forEach(function (item) {
 						var isSelected = selection && !!selection.get(item.attachmentId);
 						var addMode   = 'copy' === item.addMode ? 'copy' : 'select';
+						var isVideo   = 'VIDEO' === item.type;
 						var $thumb = $(
-							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-add-mode="' + _.escape(addMode) + '">' +
+							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + (isVideo ? ' is-video' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '" data-id="' + _.escape(item.immichId || '') + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-add-mode="' + _.escape(addMode) + '" data-filename="' + _.escape(item.title || '') + '">' +
 								'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.title) + '" />' +
+								(isVideo ? self._videoOverlayHtml() : '') +
 								'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
 								self._modeBadgeHtml(addMode) +
+								self._previewBtnHtml() +
 							'</div>'
 						);
 						$grid.append($thumb);
