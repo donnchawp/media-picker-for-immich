@@ -27,6 +27,24 @@ class Immich_Media_Picker {
 	private const COPY_SIZE_CHOICES = array( 'original', 'fullsize', 'preview', 'thumbnail' );
 
 	/**
+	 * Singleton instance, set in the constructor.
+	 */
+	private static ?self $the_instance = null;
+
+	/**
+	 * Retrieve the running plugin instance.
+	 *
+	 * Used by the block render shim (`includes/block-album-gallery/render.php`)
+	 * to dispatch into the class method without holding a separate handle.
+	 */
+	public static function instance(): self {
+		if ( null === self::$the_instance ) {
+			self::$the_instance = new self();
+		}
+		return self::$the_instance;
+	}
+
+	/**
 	 * The minimum Immich API key permissions the plugin needs to function.
 	 *
 	 * Single source of truth used by both the Settings page and the per-user
@@ -576,7 +594,7 @@ class Immich_Media_Picker {
 		}
 
 		$type = sanitize_key( $_GET['immich_media_proxy'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		if ( ! in_array( $type, array( 'thumbnail', 'preview', 'original', 'video' ), true ) ) {
+		if ( ! in_array( $type, array( 'thumbnail', 'preview', 'fullsize', 'original', 'video' ), true ) ) {
 			status_header( 400 );
 			exit( 'Invalid type.' );
 		}
@@ -662,6 +680,7 @@ class Immich_Media_Picker {
 		$api_url = match ( $type ) {
 			'thumbnail' => $base . '/api/assets/' . $id . '/thumbnail',
 			'preview'   => $base . '/api/assets/' . $id . '/thumbnail?size=preview',
+			'fullsize'  => $base . '/api/assets/' . $id . '/thumbnail?size=fullsize',
 			'video'     => $base . '/api/assets/' . $id . '/video/playback',
 			default     => $base . '/api/assets/' . $id . '/original',
 		};
@@ -1942,7 +1961,11 @@ class Immich_Media_Picker {
 
 		$children = '';
 		foreach ( $assets as $a ) {
-			$url      = home_url( '/?immich_media_proxy=' . rawurlencode( $size ) . '&id=' . rawurlencode( $a['id'] ) );
+			$asset_id = isset( $a['id'] ) ? (string) $a['id'] : '';
+			if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) ) {
+				continue;
+			}
+			$url      = home_url( '/?immich_media_proxy=' . rawurlencode( $size ) . '&id=' . rawurlencode( $asset_id ) );
 			$alt      = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
 			$children .= '<figure class="wp-block-image size-large">'
 				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
@@ -1988,5 +2011,5 @@ class Immich_Media_Picker {
 }
 
 add_action( 'plugins_loaded', function () {
-	new Immich_Media_Picker();
+	Immich_Media_Picker::instance();
 } );
