@@ -56,6 +56,7 @@ class Immich_Media_Picker {
 
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_settings_page' ) );
+		add_action( 'admin_menu', array( $this, 'add_cache_files_page' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'show_user_profile', array( $this, 'render_user_api_key_field' ) );
 		add_action( 'edit_user_profile', array( $this, 'render_user_api_key_field' ) );
@@ -139,6 +140,110 @@ class Immich_Media_Picker {
 			'media-picker-for-immich',
 			array( $this, 'render_settings_page' )
 		);
+	}
+
+	public function add_cache_files_page(): void {
+		add_media_page(
+			__( 'Immich Cache Files', 'media-picker-for-immich' ),
+			__( 'Cache Files', 'media-picker-for-immich' ),
+			'manage_options',
+			'immich-cache-files',
+			array( $this, 'render_cache_files_page' )
+		);
+	}
+
+	public function render_cache_files_page(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have permission to view cached files.', 'media-picker-for-immich' ) );
+		}
+
+		require_once IMMICH_MEDIA_PICKER_DIR . 'includes/class-immich-cache-list-table.php';
+
+		$notice = '';
+
+		// Empty Cache action.
+		if ( isset( $_POST['immich_empty_cache'] ) ) {
+			check_admin_referer( 'immich_empty_cache' );
+			$count   = $this->empty_cache();
+			/* translators: %d: number of cached files removed */
+			$notice  = sprintf( _n( 'Removed %d cached file.', 'Removed %d cached files.', $count, 'media-picker-for-immich' ), $count );
+		}
+
+		// Single-row delete from the Name column row action.
+		if ( isset( $_GET['immich_act'] ) && 'delete' === sanitize_key( $_GET['immich_act'] ) && isset( $_GET['cache_type'], $_GET['cache_uuid'] ) ) {
+			$uuid = sanitize_text_field( wp_unslash( $_GET['cache_uuid'] ) );
+			$type = sanitize_key( wp_unslash( $_GET['cache_type'] ) );
+			check_admin_referer( 'immich_delete_cache_' . $uuid );
+			if ( $this->delete_cache_file( $type, $uuid ) ) {
+				$notice = __( 'Cached file deleted.', 'media-picker-for-immich' );
+			}
+		}
+
+		$preview_nonce = wp_create_nonce( 'immich_preview' );
+		$table         = new Immich_Cache_List_Table( $this, 'immich-cache-files', $preview_nonce );
+
+		// Bulk delete is dispatched here (not inside the table, since we need
+		// the plugin instance to actually delete).
+		$action = $table->current_action();
+		if ( 'delete' === $action ) {
+			check_admin_referer( 'bulk-cache_files' );
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified above
+			$selected = isset( $_REQUEST['cache_items'] ) ? (array) wp_unslash( $_REQUEST['cache_items'] ) : array();
+			$deleted  = 0;
+			foreach ( $selected as $entry ) {
+				$entry = sanitize_text_field( $entry );
+				if ( ! str_contains( $entry, ':' ) ) {
+					continue;
+				}
+				[ $type, $uuid ] = explode( ':', $entry, 2 );
+				if ( $this->delete_cache_file( $type, $uuid ) ) {
+					$deleted++;
+				}
+			}
+			/* translators: %d: number of cached files removed */
+			$notice = sprintf( _n( 'Removed %d cached file.', 'Removed %d cached files.', $deleted, 'media-picker-for-immich' ), $deleted );
+		}
+
+		$table->prepare_items();
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'Immich Cache Files', 'media-picker-for-immich' ); ?></h1>
+
+			<?php if ( '' !== $notice ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( $notice ); ?></p></div>
+			<?php endif; ?>
+
+			<p class="description">
+				<?php
+				printf(
+					/* translators: 1: number of cached files, 2: human-readable size */
+					esc_html__( 'Currently caching %1$d files using %2$s.', 'media-picker-for-immich' ),
+					(int) $table->total_count(),
+					esc_html( size_format( $table->total_size() ) ?: '0 B' )
+				);
+				?>
+			</p>
+
+			<form method="post">
+				<?php
+				wp_nonce_field( 'bulk-cache_files' );
+				$table->display();
+				?>
+			</form>
+
+			<?php if ( $table->total_count() > 0 ) : ?>
+				<form method="post" onsubmit="return confirm('<?php echo esc_js( __( 'Delete every cached file? They will be re-fetched from Immich on demand.', 'media-picker-for-immich' ) ); ?>');">
+					<?php wp_nonce_field( 'immich_empty_cache' ); ?>
+					<input type="hidden" name="immich_empty_cache" value="1" />
+					<p>
+						<button type="submit" class="button button-secondary">
+							<?php esc_html_e( 'Empty Cache', 'media-picker-for-immich' ); ?>
+						</button>
+					</p>
+				</form>
+			<?php endif; ?>
+		</div>
+		<?php
 	}
 
 	public function register_settings(): void {
@@ -601,6 +706,122 @@ class Immich_Media_Picker {
 			'meta' => $cache_dir . '/' . $id . '.type',
 			'lock' => $cache_dir . '/' . $id . '.lock',
 		);
+	}
+
+	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'original', 'video' );
+
+	private const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
+	/**
+	 * Walk the cache root and return one entry per cached binary file
+	 * (skipping .type sidecars and .lock companions).
+	 *
+	 * @return array<int, array{type:string, uuid:string, path:string, size:int, mtime:int}>
+	 */
+	public function enumerate_cache_files(): array {
+		$root  = $this->get_cache_root();
+		$items = array();
+
+		foreach ( self::CACHE_TYPES as $type ) {
+			$dir = $root . '/' . $type;
+			if ( ! is_dir( $dir ) ) {
+				continue;
+			}
+			$handle = @opendir( $dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- defensive: dir may briefly be unreadable
+			if ( ! $handle ) {
+				continue;
+			}
+			while ( false !== ( $entry = readdir( $handle ) ) ) {
+				if ( '.' === $entry || '..' === $entry ) {
+					continue;
+				}
+				if ( ! preg_match( self::UUID_PATTERN, $entry ) ) {
+					continue;
+				}
+				$path = $dir . '/' . $entry;
+				if ( ! is_file( $path ) ) {
+					continue;
+				}
+				$size  = (int) filesize( $path );
+				$mtime = (int) filemtime( $path );
+				$items[] = array(
+					'type'  => $type,
+					'uuid'  => $entry,
+					'path'  => $path,
+					'size'  => $size,
+					'mtime' => $mtime,
+				);
+			}
+			closedir( $handle );
+		}
+
+		return $items;
+	}
+
+	/**
+	 * Delete a single cache entry's binary, .type sidecar, and any leftover
+	 * .lock file. Validates that $type is in the allowlist and $uuid matches
+	 * the canonical UUID pattern; refuses anything else.
+	 */
+	public function delete_cache_file( string $type, string $uuid ): bool {
+		if ( ! in_array( $type, self::CACHE_TYPES, true ) ) {
+			return false;
+		}
+		if ( ! preg_match( self::UUID_PATTERN, $uuid ) ) {
+			return false;
+		}
+		$paths   = $this->get_cache_paths( $type, $uuid );
+		$deleted = false;
+		foreach ( array( 'file', 'meta', 'lock' ) as $key ) {
+			if ( file_exists( $paths[ $key ] ) ) {
+				wp_delete_file( $paths[ $key ] );
+				$deleted = true;
+			}
+		}
+		return $deleted;
+	}
+
+	/**
+	 * Delete every cached binary across every subdir. Returns count of binaries
+	 * removed (matching the UUID-named files only; .type/.lock companions are
+	 * removed alongside their owners but not counted).
+	 */
+	public function empty_cache(): int {
+		$count = 0;
+		foreach ( $this->enumerate_cache_files() as $item ) {
+			if ( $this->delete_cache_file( $item['type'], $item['uuid'] ) ) {
+				$count++;
+			}
+		}
+		return $count;
+	}
+
+	/**
+	 * Map UUID → WP attachment ID for any of the given UUIDs that have a
+	 * matching `_immich_asset_id` post meta. Single query rather than per-row.
+	 *
+	 * @param string[] $uuids
+	 * @return array<string, int>
+	 */
+	public function lookup_attachments_for_uuids( array $uuids ): array {
+		$uuids = array_values( array_unique( array_filter( $uuids, fn( $u ) => preg_match( self::UUID_PATTERN, $u ) ) ) );
+		if ( empty( $uuids ) ) {
+			return array();
+		}
+		global $wpdb;
+		$placeholders = implode( ',', array_fill( 0, count( $uuids ), '%s' ) );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- placeholders generated from count, values passed via prepare()
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_immich_asset_id' AND meta_value IN ($placeholders)",
+				...$uuids
+			)
+		);
+		$map = array();
+		foreach ( $rows ?: array() as $row ) {
+			$map[ $row->meta_value ] = (int) $row->post_id;
+		}
+		return $map;
 	}
 
 	/**
