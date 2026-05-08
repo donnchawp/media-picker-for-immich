@@ -76,6 +76,7 @@ class Immich_Media_Picker {
 		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
 		add_action( 'init', array( $this, 'maybe_schedule_add_mode_upgrade' ) );
+		add_action( 'init', array( $this, 'register_blocks' ) );
 		add_action( 'immich_upgrade_add_mode', array( $this, 'run_add_mode_upgrade' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
@@ -1837,6 +1838,29 @@ class Immich_Media_Picker {
 			'nextPage' => $has_more ? $page + 1 : null,
 			'total'    => $query->found_posts,
 		) );
+	}
+
+	/**
+	 * Register Gutenberg blocks shipped by this plugin.
+	 */
+	public function register_blocks(): void {
+		register_block_type( __DIR__ . '/includes/block-album-gallery' );
+	}
+
+	/**
+	 * Render the immich/album-gallery block.
+	 *
+	 * Stub — full implementation in Task 5+.
+	 *
+	 * @param array $attrs Block attributes.
+	 * @return string Rendered HTML.
+	 */
+	public function render_album_block( array $attrs ): string {
+		$album_id = isset( $attrs['albumId'] ) ? (string) $attrs['albumId'] : '';
+		if ( '' === $album_id || ! preg_match( self::UUID_PATTERN, $album_id ) ) {
+			return '';
+		}
+		return '<p>' . esc_html__( 'Immich album gallery placeholder', 'media-picker-for-immich' ) . ' (id: ' . esc_html( $album_id ) . ')</p>';
 	}
 }
 
