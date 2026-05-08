@@ -71,6 +71,7 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_used_assets', array( $this, 'ajax_used_assets' ) );
 		add_action( 'wp_ajax_immich_save_picker_split', array( $this, 'ajax_save_picker_split' ) );
 		add_action( 'wp_ajax_immich_test_connection', array( $this, 'ajax_test_connection' ) );
+		add_action( 'wp_ajax_immich_albums', array( $this, 'ajax_albums' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
@@ -531,6 +532,33 @@ class Immich_Media_Picker {
 			return $base . '/original';
 		}
 		return $base . '/thumbnail?size=' . rawurlencode( $copy_size );
+	}
+
+	/**
+	 * Build a preview-nonce-signed proxy URL for an asset.
+	 *
+	 * Lets logged-in users with upload_files capability fetch a thumbnail
+	 * for an asset that is not (yet) a WordPress attachment. Used by the
+	 * album picker to render album cover thumbnails.
+	 *
+	 * @param string $asset_id Asset UUID. Empty string returns ''.
+	 * @param string $size     'thumbnail', 'preview', 'fullsize', or 'video'.
+	 * @return string URL, or '' if asset_id is empty/invalid.
+	 */
+	private function preview_proxy_url( string $asset_id, string $size = 'thumbnail' ): string {
+		if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) ) {
+			return '';
+		}
+		$allowed = array( 'thumbnail', 'preview', 'fullsize', 'video' );
+		if ( ! in_array( $size, $allowed, true ) ) {
+			$size = 'thumbnail';
+		}
+		$args = array(
+			'immich_media_proxy' => $size,
+			'id'                 => $asset_id,
+			'preview_nonce'      => wp_create_nonce( 'immich_preview' ),
+		);
+		return add_query_arg( $args, home_url( '/' ) );
 	}
 
 	/**
@@ -1522,6 +1550,38 @@ class Immich_Media_Picker {
 		}
 
 		wp_send_json_success( $result );
+	}
+
+	/**
+	 * AJAX: list Immich albums for the picker.
+	 */
+	public function ajax_albums(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+		$response = $this->api_request( '/api/albums' );
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error(
+				array(
+					'message' => $response->get_error_message(),
+					'code'    => $response->get_error_code(),
+				)
+			);
+		}
+		$items = array_map(
+			function ( $a ) {
+				return array(
+					'id'        => isset( $a['id'] ) ? (string) $a['id'] : '',
+					'name'      => isset( $a['albumName'] ) ? (string) $a['albumName'] : '',
+					'count'     => isset( $a['assetCount'] ) ? (int) $a['assetCount'] : 0,
+					'thumbnail' => $this->preview_proxy_url( isset( $a['albumThumbnailAssetId'] ) ? (string) $a['albumThumbnailAssetId'] : '', 'thumbnail' ),
+				);
+			},
+			(array) $response
+		);
+		// Filter out malformed entries (no id).
+		$items = array_values( array_filter( $items, function ( $i ) { return '' !== $i['id']; } ) );
+		wp_send_json_success( array( 'items' => $items ) );
 	}
 
 	public function ajax_thumbnail(): void {
