@@ -199,6 +199,29 @@ class Immich_Media_Picker {
 			}
 		}
 
+		// Empty all album caches.
+		if ( isset( $_POST['immich_empty_album_caches'] ) ) {
+			check_admin_referer( 'immich_empty_album_caches' );
+			global $wpdb;
+			$deleted = (int) $wpdb->query(
+				"DELETE FROM {$wpdb->options}
+				 WHERE option_name LIKE '_transient_immich_album_%'
+				 OR option_name LIKE '_transient_timeout_immich_album_%'"
+			);
+			/* translators: %d: number of cached album entries removed (each album has up to 2 rows). */
+			$notice = sprintf( __( 'Emptied %d cached album entries.', 'media-picker-for-immich' ), $deleted );
+		}
+
+		// Delete a single album cache transient.
+		if ( isset( $_GET['immich_act'] ) && 'delete_album' === sanitize_key( $_GET['immich_act'] ) && isset( $_GET['album_key'] ) ) {
+			$key = sanitize_text_field( wp_unslash( $_GET['album_key'] ) );
+			check_admin_referer( 'immich_delete_album_' . $key );
+			if ( preg_match( '/^immich_album_[0-9a-f-]{36}_(default|oldest|newest|random)$/i', $key ) ) {
+				delete_transient( $key );
+				$notice = __( 'Album cache deleted.', 'media-picker-for-immich' );
+			}
+		}
+
 		$preview_nonce = wp_create_nonce( 'immich_preview' );
 		$table         = new Immich_Cache_List_Table( $this, 'immich-cache-files', $preview_nonce );
 
@@ -262,6 +285,70 @@ class Immich_Media_Picker {
 					</p>
 				</form>
 			<?php endif; ?>
+
+		<?php
+		$album_caches = $this->enumerate_album_caches();
+		?>
+
+		<h2><?php esc_html_e( 'Album lists', 'media-picker-for-immich' ); ?></h2>
+		<?php if ( empty( $album_caches ) ) : ?>
+			<p><?php esc_html_e( 'No cached album lists.', 'media-picker-for-immich' ); ?></p>
+		<?php else : ?>
+			<form method="post" style="margin-bottom:8px;">
+				<?php wp_nonce_field( 'immich_empty_album_caches' ); ?>
+				<button type="submit" name="immich_empty_album_caches" value="1" class="button">
+					<?php esc_html_e( 'Empty all album caches', 'media-picker-for-immich' ); ?>
+				</button>
+			</form>
+			<table class="wp-list-table widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Album UUID', 'media-picker-for-immich' ); ?></th>
+						<th><?php esc_html_e( 'Sort', 'media-picker-for-immich' ); ?></th>
+						<th><?php esc_html_e( 'Assets', 'media-picker-for-immich' ); ?></th>
+						<th><?php esc_html_e( 'Cached', 'media-picker-for-immich' ); ?></th>
+						<th><?php esc_html_e( 'Size', 'media-picker-for-immich' ); ?></th>
+						<th><?php esc_html_e( 'Actions', 'media-picker-for-immich' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $album_caches as $row ) :
+						$delete_url = wp_nonce_url(
+							add_query_arg(
+								array(
+									'page'       => 'immich-cache-files',
+									'immich_act' => 'delete_album',
+									'album_key'  => rawurlencode( $row['key'] ),
+								),
+								admin_url( 'upload.php' )
+							),
+							'immich_delete_album_' . $row['key']
+						);
+						?>
+						<tr>
+							<td><code><?php echo esc_html( $row['uuid'] ); ?></code></td>
+							<td><?php echo esc_html( $row['sort'] ); ?></td>
+							<td><?php echo (int) $row['total_count']; ?></td>
+							<td>
+								<?php
+								if ( $row['fetched_at'] > 0 ) {
+									printf(
+										/* translators: %s: human-readable time difference. */
+										esc_html__( '%s ago', 'media-picker-for-immich' ),
+										esc_html( human_time_diff( $row['fetched_at'] ) )
+									);
+								} else {
+									esc_html_e( 'unknown', 'media-picker-for-immich' );
+								}
+								?>
+							</td>
+							<td><?php echo esc_html( size_format( $row['size'] ) ?: '0 B' ); ?></td>
+							<td><a href="<?php echo esc_url( $delete_url ); ?>"><?php esc_html_e( 'Delete', 'media-picker-for-immich' ); ?></a></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		<?php endif; ?>
 		</div>
 		<?php
 	}
@@ -803,6 +890,46 @@ class Immich_Media_Picker {
 			closedir( $handle );
 		}
 
+		return $items;
+	}
+
+	/**
+	 * Enumerate active album-list transients.
+	 *
+	 * Returns one entry per (uuid, sort) variant. Reads from wp_options directly
+	 * so we can include transients with no expiry-timeout sibling (truly stale
+	 * entries left from prior runs).
+	 *
+	 * @return array<int,array{key:string,uuid:string,sort:string,total_count:int,fetched_at:int,size:int}>
+	 */
+	public function enumerate_album_caches(): array {
+		global $wpdb;
+		$rows  = $wpdb->get_results(
+			"SELECT option_name, option_value FROM {$wpdb->options}
+			 WHERE option_name LIKE '_transient_immich_album_%'
+			 AND option_name NOT LIKE '_transient_timeout_%'"
+		);
+		$items = array();
+		foreach ( $rows as $row ) {
+			$name = (string) $row->option_name;
+			// _transient_immich_album_<uuid>_<sort>
+			if ( ! preg_match( '/^_transient_immich_album_([0-9a-f-]{36})_(default|oldest|newest|random)$/i', $name, $m ) ) {
+				continue;
+			}
+			$payload = maybe_unserialize( $row->option_value );
+			if ( ! is_array( $payload ) ) {
+				continue;
+			}
+			$items[] = array(
+				'key'         => substr( $name, strlen( '_transient_' ) ),
+				'uuid'        => $m[1],
+				'sort'        => $m[2],
+				'total_count' => isset( $payload['total_count'] ) ? (int) $payload['total_count'] : 0,
+				'fetched_at'  => isset( $payload['fetched_at'] ) ? (int) $payload['fetched_at'] : 0,
+				'size'        => strlen( (string) $row->option_value ),
+			);
+		}
+		usort( $items, function ( $a, $b ) { return $b['fetched_at'] <=> $a['fetched_at']; } );
 		return $items;
 	}
 
