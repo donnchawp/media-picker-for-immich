@@ -1,0 +1,54 @@
+.immich-test-connection {
+	margin-top: 8px;
+}
+
+.immich-test-result {
+	display: inline-block;
+	margin-left: 8px;
+	vertical-align: top;
+}
+
+.immich-test-result.immich-test-ok strong {
+	color: #007017;
+}
+
+.immich-test-result.immich-test-fail strong,
+.immich-test-result.immich-test-fail {
+	color: #b32d2e;
+}
+
+.immich-test-result .dashicons {
+	vertical-align: middle;
+}
+
+.immich-test-result.immich-test-ok .dashicons {
+	color: #007017;
+}
+
+.immich-test-result.immich-test-fail .dashicons {
+	color: #b32d2e;
+}
+
+.immich-test-scopes {
+	margin: 6px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.immich-test-scopes li {
+	margin: 2px 0;
+	font-size: 13px;
+}
+
+.immich-test-scopes .dashicons-yes {
+	color: #007017;
+}
+
+.immich-test-scopes .dashicons-no,
+.immich-test-scopes .dashicons-warning {
+	color: #b32d2e;
+}
+
+.immich-test-scopes .dashicons-minus {
+	color: #787c82;
+}
