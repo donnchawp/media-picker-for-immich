@@ -203,13 +203,13 @@ class Immich_Media_Picker {
 		// Empty all album caches.
 		if ( isset( $_POST['immich_empty_album_caches'] ) ) {
 			check_admin_referer( 'immich_empty_album_caches' );
-			global $wpdb;
-			$deleted = (int) $wpdb->query(
-				"DELETE FROM {$wpdb->options}
-				 WHERE option_name LIKE '_transient_immich_album_%'
-				 OR option_name LIKE '_transient_timeout_immich_album_%'"
-			);
-			/* translators: %d: number of cached album entries removed (each album has up to 2 rows). */
+			$deleted = 0;
+			foreach ( $this->enumerate_album_caches() as $row ) {
+				if ( delete_transient( $row['key'] ) ) {
+					$deleted++;
+				}
+			}
+			/* translators: %d: number of cached album entries removed. */
 			$notice = sprintf( __( 'Emptied %d cached album entries.', 'media-picker-for-immich' ), $deleted );
 		}
 
@@ -745,6 +745,16 @@ class Immich_Media_Picker {
 			// HMAC over (asset_id, post_id) with wp_salt('nonce'). Stable across
 			// page loads (no nonce-tick expiry) so cached frontend HTML stays
 			// valid for the lifetime of the post.
+			//
+			// The token does not bind to size, so without restricting the
+			// accepted sizes a visitor could swap a rendered preview URL to
+			// `original` or `video` and pull the raw file with full EXIF/GPS
+			// or a full video stream. Album blocks only render image sizes,
+			// so accept those and reject the originals/video escalations.
+			if ( ! in_array( $type, array( 'thumbnail', 'preview', 'fullsize' ), true ) ) {
+				status_header( 403 );
+				exit( 'Forbidden.' );
+			}
 			$expected = hash_hmac( 'sha256', $id . '|' . $album_post, wp_salt( 'nonce' ) );
 			if ( ! hash_equals( $expected, $album_token ) ) {
 				status_header( 403 );
@@ -2453,7 +2463,15 @@ class Immich_Media_Picker {
 	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
 	 */
 	private function fetch_album_assets( string $album_id, string $sort = 'default', int $author_id = 0 ) {
-		$key    = $this->album_cache_key( $album_id, $sort );
+		$key = $this->album_cache_key( $album_id, $sort );
+
+		// Capture the stale payload before get_transient(): when the timeout
+		// has lapsed get_transient() deletes the underlying _transient_$key
+		// option row before returning false, so reading it afterwards would
+		// find nothing and the "serve stale when Immich is unreachable" path
+		// would never fire in the normal-expiry case.
+		$stale = $this->read_stale_transient( $key );
+
 		$cached = get_transient( $key );
 		if ( false !== $cached && is_array( $cached ) ) {
 			$cached['stale'] = false;
@@ -2463,12 +2481,9 @@ class Immich_Media_Picker {
 		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ), 'GET', null, $author_id );
 		if ( is_wp_error( $response ) ) {
 			$is_not_found = ( 404 === $this->api_error_status( $response ) );
-			if ( ! $is_not_found ) {
-				$stale = $this->read_stale_transient( $key );
-				if ( false !== $stale && is_array( $stale ) ) {
-					$stale['stale'] = true;
-					return $stale;
-				}
+			if ( ! $is_not_found && false !== $stale && is_array( $stale ) ) {
+				$stale['stale'] = true;
+				return $stale;
 			}
 			return $response;
 		}
