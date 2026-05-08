@@ -109,20 +109,20 @@
 			var self = this;
 			this.$el.append(
 				'<div class="immich-status">' + _.escape( __( 'Loading albums…', 'media-picker-for-immich' ) ) + '</div>' +
-				'<div class="immich-album-grid" role="list"></div>'
+				'<div class="immich-album-grid"></div>'
 			);
-			var $status = this.$el.find( '.immich-status' );
-			var $grid   = this.$el.find( '.immich-album-grid' );
 
 			wp.ajax.post( 'immich_albums', { nonce: config.nonce } )
 				.done( function ( data ) {
-					$status.hide();
+					self.$el.find( '.immich-status' ).hide();
+					var $grid = self.$el.find( '.immich-album-grid' );
+					if ( ! $grid.length ) { return; }
 					if ( ! data || ! data.items || ! data.items.length ) {
 						$grid.html( '<p class="immich-empty">' + _.escape( __( 'No albums in this Immich server.', 'media-picker-for-immich' ) ) + '</p>' );
 						return;
 					}
 					var html = data.items.map( function ( a ) {
-						return '<button type="button" class="immich-album-tile" role="listitem"' +
+						return '<button type="button" class="immich-album-tile"' +
 							' data-album-id="' + _.escape( a.id ) + '"' +
 							' data-album-name="' + _.escape( a.name ) + '">' +
 							( a.thumbnail
@@ -135,7 +135,8 @@
 					$grid.html( html );
 				} )
 				.fail( function ( resp ) {
-					$status.text( ( resp && resp.message ) ? resp.message : __( 'Could not load albums.', 'media-picker-for-immich' ) );
+					self.$el.find( '.immich-status' )
+						.text( ( resp && resp.message ) ? resp.message : __( 'Could not load albums.', 'media-picker-for-immich' ) );
 				} );
 
 			this.$el.off( 'click.immichAlbums' ).on( 'click.immichAlbums', '.immich-album-tile', function () {
