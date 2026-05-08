@@ -3,7 +3,7 @@
  * Plugin Name: Media Picker for Immich
  * Description: Use photos and videos from your Immich server in WordPress without copying files, or import them into the media library.
  * Version: 0.1.0
- * Requires at least: 6.4
+ * Requires at least: 6.5
  * Requires PHP: 8.0
  * Author: Donncha
  * Text Domain: media-picker-for-immich

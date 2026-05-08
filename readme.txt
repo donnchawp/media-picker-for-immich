@@ -1,7 +1,7 @@
 === Media Picker for Immich ===
 Contributors: donncha
 Tags: immich, media, photos, self-hosted, gallery
-Requires at least: 6.4
+Requires at least: 6.5
 Tested up to: 6.9
 Requires PHP: 8.0
 Stable tag: 0.1.0
