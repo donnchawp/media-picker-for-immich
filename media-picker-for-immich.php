@@ -67,6 +67,8 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_use', array( $this, 'ajax_use' ) );
 		add_action( 'wp_ajax_immich_used_assets', array( $this, 'ajax_used_assets' ) );
 		add_action( 'wp_ajax_immich_save_picker_split', array( $this, 'ajax_save_picker_split' ) );
+		add_action( 'wp_ajax_immich_test_connection', array( $this, 'ajax_test_connection' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
@@ -240,7 +242,7 @@ class Immich_Media_Picker {
 		$settings = get_option( 'immich_settings', array() );
 		$value    = $settings['api_url'] ?? self::DEFAULT_API_URL;
 		printf(
-			'<input type="url" name="immich_settings[api_url]" value="%s" class="regular-text" />',
+			'<input type="url" name="immich_settings[api_url]" value="%s" class="regular-text" id="immich_settings_api_url" />',
 			esc_attr( $value )
 		);
 	}
@@ -249,11 +251,20 @@ class Immich_Media_Picker {
 		$settings = get_option( 'immich_settings', array() );
 		$value    = $settings['api_key'] ?? '';
 		printf(
-			'<input type="password" name="immich_settings[api_key]" value="%s" class="regular-text" />',
+			'<input type="password" name="immich_settings[api_key]" value="%s" class="regular-text" id="immich_settings_api_key" />',
 			esc_attr( $value )
 		);
 		echo '<p class="description">' . esc_html__( 'When set, all users will use this key. Leave empty to allow per-user keys.', 'media-picker-for-immich' ) . '</p>';
+		$this->render_test_connection_button( 'site' );
 		$this->render_required_permissions_help();
+	}
+
+	private function render_test_connection_button( string $context ): void {
+		printf(
+			'<p class="immich-test-connection"><button type="button" class="button immich-test-btn" data-immich-context="%s">%s</button> <span class="immich-test-result" aria-live="polite"></span></p>',
+			esc_attr( $context ),
+			esc_html__( 'Test Connection', 'media-picker-for-immich' )
+		);
 	}
 
 	public function render_cache_section(): void {
@@ -638,6 +649,150 @@ class Immich_Media_Picker {
 		return $json ?? array();
 	}
 
+	/**
+	 * Probe a single Immich endpoint with the given URL/key. Used by the
+	 * Test Connection button so we can hit values that haven't been saved
+	 * to the database yet.
+	 */
+	private function probe_immich( string $base_url, string $api_key, string $path, string $method = 'GET', ?array $body = null, array $extra_headers = array() ): array {
+		$url  = rtrim( $base_url, '/' ) . $path;
+		$args = array(
+			'timeout' => 8,
+			'headers' => array_merge(
+				array(
+					'x-api-key' => $api_key,
+					'Accept'    => 'application/json',
+				),
+				$extra_headers
+			),
+		);
+
+		if ( 'POST' === $method ) {
+			$args['headers']['Content-Type'] = 'application/json';
+			$args['body']                    = wp_json_encode( $body ?? array() );
+			$response                        = wp_remote_post( $url, $args );
+		} else {
+			$response = wp_remote_get( $url, $args );
+		}
+
+		if ( is_wp_error( $response ) ) {
+			$msg     = $response->get_error_message();
+			$timeout = stripos( $msg, 'timed out' ) !== false || stripos( $msg, 'timeout' ) !== false;
+			return array(
+				'ok'      => false,
+				'code'    => 0,
+				'status'  => $timeout ? 'timeout' : 'unreachable',
+				'message' => $msg,
+				'body'    => null,
+			);
+		}
+
+		$code = (int) wp_remote_retrieve_response_code( $response );
+		$json = json_decode( wp_remote_retrieve_body( $response ), true );
+		$ok   = $code >= 200 && $code < 300;
+		return array(
+			'ok'      => $ok,
+			'code'    => $code,
+			'status'  => $ok ? 'ok' : ( ( 401 === $code || 403 === $code ) ? 'unauthorized' : 'http_error' ),
+			'message' => sprintf( 'HTTP %d', $code ),
+			'body'    => $json,
+		);
+	}
+
+	public function ajax_test_connection(): void {
+		if ( ! check_ajax_referer( 'immich_test_connection', 'nonce', false ) ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid nonce.', 'media-picker-for-immich' ) ), 403 );
+		}
+		if ( ! current_user_can( 'upload_files' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'media-picker-for-immich' ) ), 403 );
+		}
+
+		// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified above
+		$base_url = esc_url_raw( wp_unslash( $_POST['url'] ?? '' ) );
+		$api_key  = trim( wp_unslash( $_POST['key'] ?? '' ) );
+		// phpcs:enable
+
+		if ( '' === $base_url ) {
+			wp_send_json_error( array(
+				'status'  => 'invalid',
+				'message' => __( 'Enter a valid API URL before testing.', 'media-picker-for-immich' ),
+			) );
+		}
+		if ( '' === $api_key ) {
+			wp_send_json_error( array(
+				'status'  => 'invalid',
+				'message' => __( 'Enter an API key before testing.', 'media-picker-for-immich' ),
+			) );
+		}
+
+		// Phase 1: authenticate.
+		$me = $this->probe_immich( $base_url, $api_key, '/api/users/me' );
+		if ( ! $me['ok'] ) {
+			$message = match ( $me['status'] ) {
+				'unauthorized' => __( 'API key rejected by Immich.', 'media-picker-for-immich' ),
+				'timeout'      => __( 'The Immich server did not respond in time.', 'media-picker-for-immich' ),
+				'unreachable'  => __( 'Could not reach the Immich server. Check the API URL.', 'media-picker-for-immich' ),
+				default        => sprintf( /* translators: %d: HTTP status code */ __( 'Unexpected response from Immich (HTTP %d).', 'media-picker-for-immich' ), $me['code'] ),
+			};
+			wp_send_json_success( array(
+				'ok'      => false,
+				'status'  => $me['status'],
+				'message' => $message,
+			) );
+		}
+
+		$user_label = is_array( $me['body'] ) ? ( $me['body']['email'] ?? $me['body']['name'] ?? '' ) : '';
+
+		// Phase 2: scope probes.
+		$scopes = array();
+
+		$asset_read_probe         = $this->probe_immich( $base_url, $api_key, '/api/search/metadata', 'POST', array( 'size' => 1, 'page' => 1 ) );
+		$scopes['asset.read']     = $this->scope_status( $asset_read_probe );
+
+		$person_read_probe        = $this->probe_immich( $base_url, $api_key, '/api/people?size=1' );
+		$scopes['person.read']    = $this->scope_status( $person_read_probe );
+
+		$asset_id = '';
+		if ( $asset_read_probe['ok'] && is_array( $asset_read_probe['body'] ) ) {
+			$asset_id = $asset_read_probe['body']['assets']['items'][0]['id'] ?? '';
+		}
+
+		if ( '' !== $asset_id ) {
+			$thumb_probe              = $this->probe_immich( $base_url, $api_key, '/api/assets/' . rawurlencode( $asset_id ) . '/thumbnail' );
+			$scopes['asset.view']     = $this->scope_status( $thumb_probe );
+			$orig_probe               = $this->probe_immich( $base_url, $api_key, '/api/assets/' . rawurlencode( $asset_id ) . '/original', 'GET', null, array( 'Range' => 'bytes=0-0' ) );
+			// 206 (Partial Content) also means access succeeded.
+			if ( ! $orig_probe['ok'] && 206 === $orig_probe['code'] ) {
+				$orig_probe['ok']     = true;
+				$orig_probe['status'] = 'ok';
+			}
+			$scopes['asset.download'] = $this->scope_status( $orig_probe );
+		} else {
+			$scopes['asset.view']     = 'unverified';
+			$scopes['asset.download'] = 'unverified';
+		}
+
+		wp_send_json_success( array(
+			'ok'      => true,
+			'status'  => 'connected',
+			'user'    => $user_label,
+			'scopes'  => $scopes,
+			'message' => '' !== $user_label
+				? sprintf( /* translators: %s: Immich user identifier */ __( 'Connected as %s.', 'media-picker-for-immich' ), $user_label )
+				: __( 'Connected.', 'media-picker-for-immich' ),
+		) );
+	}
+
+	private function scope_status( array $probe ): string {
+		if ( $probe['ok'] ) {
+			return 'ok';
+		}
+		if ( 'unauthorized' === $probe['status'] ) {
+			return 'missing';
+		}
+		return 'error';
+	}
+
 	private function verify_ajax_request(): bool {
 		if ( ! check_ajax_referer( 'immich_nonce', 'nonce', false ) ) {
 			wp_send_json_error( 'Invalid nonce.', 403 );
@@ -689,6 +844,35 @@ class Immich_Media_Picker {
 			plugin_dir_url( __FILE__ ) . 'assets/css/media-picker-for-immich.css',
 			array( 'media-views' ),
 			filemtime( plugin_dir_path( __FILE__ ) . 'assets/css/media-picker-for-immich.css' )
+		);
+	}
+
+	public function enqueue_admin_assets( string $hook ): void {
+		$is_settings = 'settings_page_media-picker-for-immich' === $hook;
+		$is_profile  = 'profile.php' === $hook || 'user-edit.php' === $hook;
+		if ( ! $is_settings && ! $is_profile ) {
+			return;
+		}
+
+		wp_enqueue_script(
+			'immich-admin',
+			IMMICH_MEDIA_PICKER_URL . 'assets/js/immich-admin.js',
+			array( 'jquery', 'wp-i18n' ),
+			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/js/immich-admin.js' ),
+			true
+		);
+		wp_set_script_translations( 'immich-admin', 'media-picker-for-immich' );
+		$saved = get_option( 'immich_settings', array() );
+		wp_localize_script( 'immich-admin', 'ImmichAdmin', array(
+			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce'   => wp_create_nonce( 'immich_test_connection' ),
+			'savedUrl' => $saved['api_url'] ?? '',
+		) );
+		wp_enqueue_style(
+			'immich-admin',
+			IMMICH_MEDIA_PICKER_URL . 'assets/css/immich-admin.css',
+			array(),
+			filemtime( IMMICH_MEDIA_PICKER_DIR . 'assets/css/immich-admin.css' )
 		);
 	}
 
@@ -765,6 +949,7 @@ class Immich_Media_Picker {
 				<td>
 					<input type="password" name="immich_api_key" id="immich_api_key" value="<?php echo esc_attr( $value ); ?>" class="regular-text" />
 					<p class="description"><?php esc_html_e( 'Your personal Immich API key.', 'media-picker-for-immich' ); ?></p>
+					<?php $this->render_test_connection_button( 'user' ); ?>
 					<?php $this->render_required_permissions_help(); ?>
 				</td>
 			</tr>
