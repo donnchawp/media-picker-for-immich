@@ -1926,7 +1926,64 @@ class Immich_Media_Picker {
 		if ( '' === $album_id || ! preg_match( self::UUID_PATTERN, $album_id ) ) {
 			return '';
 		}
-		return '<p>' . esc_html__( 'Immich album gallery placeholder', 'media-picker-for-immich' ) . ' (id: ' . esc_html( $album_id ) . ')</p>';
+
+		$payload = $this->fetch_album_assets( $album_id );
+		if ( is_wp_error( $payload ) ) {
+			return '';
+		}
+
+		$assets = $payload['assets'];
+		if ( empty( $assets ) ) {
+			return '';
+		}
+
+		$size    = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
+		$columns = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
+
+		$children = '';
+		foreach ( $assets as $a ) {
+			$url      = home_url( '/?immich_media_proxy=' . rawurlencode( $size ) . '&id=' . rawurlencode( $a['id'] ) );
+			$alt      = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
+			$children .= '<figure class="wp-block-image size-large">'
+				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
+				. '</figure>';
+		}
+
+		return '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex">'
+			. $children
+			. '</figure>';
+	}
+
+	/**
+	 * Validate the imageSize block attribute.
+	 *
+	 * @param string $size Raw attribute value.
+	 * @return string One of 'thumbnail', 'preview', 'fullsize'.
+	 */
+	private function validate_image_size( string $size ): string {
+		$allowed = array( 'thumbnail', 'preview', 'fullsize' );
+		return in_array( $size, $allowed, true ) ? $size : 'preview';
+	}
+
+	/**
+	 * Fetch and prepare the asset list for an album.
+	 *
+	 * No caching yet — see Task 7. No sort yet — see Task 8.
+	 *
+	 * @param string $album_id Validated UUID.
+	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
+	 */
+	private function fetch_album_assets( string $album_id ) {
+		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ) );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$assets = isset( $response['assets'] ) && is_array( $response['assets'] ) ? $response['assets'] : array();
+		return array(
+			'assets'      => array_values( $assets ),
+			'total_count' => count( $assets ),
+			'fetched_at'  => time(),
+		);
 	}
 }
 
