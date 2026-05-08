@@ -91,6 +91,26 @@ The bottom of the Immich tab shows assets you've previously added. Click them to
 
 Posts containing Immich images automatically get a lightbox. Clicking an image opens the full-resolution original in an overlay. Press Escape or click anywhere to close.
 
+## Album Gallery block
+
+This plugin ships an "Immich Album Gallery" Gutenberg block (`immich/album-gallery`) that embeds a live Immich album as a gallery. Insert the block, click "Pick album", and choose an album from your Immich server.
+
+Per-block options (sidebar):
+
+- **Columns** (1–8) — grid density.
+- **Image size** — `thumbnail`, `preview` (default), or `fullsize`.
+- **Sort order** — Album order (default), oldest, newest, or random.
+- **Limit** — cap to N images; 0 means all up to the global cap.
+- **Lightbox** — toggle the WordPress 6.4+ core lightbox on click.
+- **Show captions** — render the asset filename below each image.
+
+The album is fetched live on each page render and cached for 5 minutes. Logged-in editors can force a refresh by appending `?immich_refresh=1` to the post URL. Cached album lists appear (and can be cleared) on Media → Cache Files.
+
+Filters:
+
+- `immich_album_cache_ttl` (int seconds, default `300`)
+- `immich_album_max_assets` (int, default `100`)
+
 ## Development
 
 Requires [Node.js](https://nodejs.org/) for the wp-env development environment.

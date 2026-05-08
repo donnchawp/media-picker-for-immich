@@ -28,6 +28,8 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
 * **Per-user API keys** — each user can configure their own Immich API key
 * **Local proxy cache** — proxied media is cached on disk after the first request; optional automatic cleanup with configurable lifetime
 
+This plugin also ships an "Immich Album Gallery" block: insert it in any post, pick an Immich album, and the post renders a live gallery of that album using the core Gallery markup (so it inherits your theme's styling and works with the WordPress core lightbox).
+
 == Installation ==
 
 1. Upload the `media-picker-for-immich` folder to `wp-content/plugins/`.
@@ -77,6 +79,10 @@ When a proxied image or video is requested for the first time, the plugin fetche
 = Does the lightbox work automatically? =
 
 Yes. Posts containing proxied Immich images automatically get a lightbox. Clicking an image opens the full-resolution original in an overlay. Press Escape or click anywhere to close.
+
+= How do I embed a whole Immich album in a post? =
+
+Add the "Immich Album Gallery" block from the inserter, click "Pick album", and choose an album from your Immich server. The gallery renders live and is cached for 5 minutes; you can override per-block options like columns, image size, sort, and lightbox in the block sidebar.
 
 == Screenshots ==
 
