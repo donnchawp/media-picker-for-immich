@@ -763,13 +763,19 @@ class Immich_Media_Picker {
 			// Tokens have no expiry, so without a post-status gate a URL minted
 			// in editor preview or before unpublishing keeps streaming Immich
 			// assets anonymously. Anonymous requests require the post to be
-			// published; private/draft/etc. require an authenticated reader.
+			// published AND not password-protected; private/draft/password-
+			// protected posts require an authenticated reader. (post_status is
+			// 'publish' for password-protected posts, and current_user_can(
+			// 'read_post' ) does not consult the password cookie, so the
+			// password check has to be explicit.)
 			$post_status = get_post_status( $album_post );
 			if ( false === $post_status || 'trash' === $post_status ) {
 				status_header( 404 );
 				exit( 'Post not found.' );
 			}
-			if ( 'publish' !== $post_status && ! current_user_can( 'read_post', $album_post ) ) {
+			if ( ( 'publish' !== $post_status || post_password_required( $album_post ) )
+				&& ! current_user_can( 'read_post', $album_post )
+			) {
 				status_header( 403 );
 				exit( 'Forbidden.' );
 			}
