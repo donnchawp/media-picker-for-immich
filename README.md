@@ -102,8 +102,9 @@ Per-block options (sidebar):
 - **Image size** — `thumbnail`, `preview` (default), or `fullsize`.
 - **Sort order** — Album order (default), oldest, newest, or random.
 - **Limit** — cap to N images; 0 means all up to the global cap.
-- **Lightbox** — toggle the WordPress 6.4+ core lightbox on click.
+- **Lightbox** — click an image to open the fullsize variant in a centred overlay.
 - **Show captions** — render the asset filename below each image.
+- **Show "View on Immich" link** (default off) — when more assets exist in Immich than are rendered, append a link to the album in the Immich web UI. Defaults off because Immich is often only reachable from your LAN/VPN; turn this on only if your Immich URL is reachable from your visitors' browsers.
 
 The album is fetched live on each page render and cached for 5 minutes. Logged-in editors can force a refresh by appending `?immich_refresh=1` to the post URL. Cached album lists appear (and can be cleared) on Media → Cache Files.
 

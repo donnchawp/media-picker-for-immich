@@ -97,6 +97,12 @@
                     label: __( 'Show captions', 'media-picker-for-immich' ),
                     checked: attrs.showCaptions,
                     onChange: function ( v ) { setAttrs( { showCaptions: v } ); }
+                } ),
+                el( ToggleControl, {
+                    label: __( 'Show "View on Immich" link', 'media-picker-for-immich' ),
+                    help: __( 'Append a link to the album in Immich when more assets are hidden. Requires your Immich URL to be reachable from visitors’ browsers.', 'media-picker-for-immich' ),
+                    checked: attrs.showAlbumLink,
+                    onChange: function ( v ) { setAttrs( { showAlbumLink: v } ); }
                 } )
             )
         );

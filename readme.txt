@@ -86,6 +86,8 @@ Yes. Posts containing proxied Immich images automatically get a lightbox. Clicki
 
 Add the "Immich Album Gallery" block from the inserter, click "Pick album", and choose an album from your Immich server. The gallery renders live and is cached for 5 minutes; you can override per-block options like columns, image size, sort, and lightbox in the block sidebar.
 
+For large albums where the global cap (default 100) trims the rendered set, the block has an optional "Show 'View on Immich' link" toggle that appends a link to the album in the Immich web UI. Leave it off unless your Immich URL is reachable from your visitors' browsers — many self-hosted setups put Immich behind a VPN or on a Docker-internal hostname that won't resolve outside the LAN.
+
 == Screenshots ==
 
 1. The Immich tab in the WordPress media picker, showing recent photos with search and people filter.

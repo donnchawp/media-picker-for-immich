@@ -13,8 +13,9 @@
     "imageSize":    { "type": "string",  "default": "preview" },
     "sortOrder":    { "type": "string",  "default": "default" },
     "limit":        { "type": "number",  "default": 0 },
-    "lightbox":     { "type": "boolean", "default": true },
-    "showCaptions": { "type": "boolean", "default": false }
+    "lightbox":      { "type": "boolean", "default": true },
+    "showCaptions":  { "type": "boolean", "default": false },
+    "showAlbumLink": { "type": "boolean", "default": false }
   },
   "supports": {
     "html":  false,

@@ -2272,12 +2272,18 @@ class Immich_Media_Picker {
 		// Immich web UI URL — Immich serves both the API and the SPA from the
 		// same origin, so trimming the API path off `get_api_url()` and
 		// appending /albums/<uuid> yields the canonical browser URL.
-		$total_count = isset( $payload['total_count'] ) ? (int) $payload['total_count'] : count( $assets );
-		$hidden      = max( 0, $total_count - count( $assets ) );
-		$cap_applied = ( 0 === $limit ) && ( $hidden > 0 );
+		$total_count     = isset( $payload['total_count'] ) ? (int) $payload['total_count'] : count( $assets );
+		$hidden          = max( 0, $total_count - count( $assets ) );
+		$cap_applied     = ( 0 === $limit ) && ( $hidden > 0 );
+		$show_album_link = ! empty( $attrs['showAlbumLink'] );
 
+		// Gate the "View N more on Immich" link on an explicit per-block
+		// opt-in: get_api_url() is the URL the WordPress server uses to talk
+		// to Immich, which on a self-hosted setup is often a Docker-internal
+		// or VPN-only hostname not reachable from a visitor's browser.
+		// Defaulting off keeps galleries from shipping broken links.
 		$more_link = '';
-		if ( $cap_applied ) {
+		if ( $cap_applied && $show_album_link ) {
 			$album_url = rtrim( $this->get_api_url(), '/' ) . '/albums/' . rawurlencode( $album_id );
 			$more_link = '<p class="immich-album-more"><a href="' . esc_url( $album_url ) . '" target="_blank" rel="noopener noreferrer">'
 				. sprintf(
