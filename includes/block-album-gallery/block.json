@@ -21,5 +21,7 @@
     "align": ["wide", "full"]
   },
   "editorScript": "file:../../assets/js/immich-album-block.js",
+  "viewScript":   "file:../../assets/js/immich-album-block-frontend.js",
+  "style":        "file:../../assets/css/immich-album-block.css",
   "render":       "file:./render.php"
 }

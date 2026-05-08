@@ -2117,6 +2117,17 @@ class Immich_Media_Picker {
 	 * Register Gutenberg blocks shipped by this plugin.
 	 */
 	public function register_blocks(): void {
+		// Frontend CSS for the album gallery. Registered explicitly (rather
+		// than relying on block.json's `style:` field reaching the right
+		// auto-generated handle) so we can wp_enqueue_style() it directly
+		// from render_album_block.
+		wp_register_style(
+			'immich-album-block',
+			plugins_url( 'assets/css/immich-album-block.css', __FILE__ ),
+			array(),
+			'1.0.0'
+		);
+
 		$registered = register_block_type( __DIR__ . '/includes/block-album-gallery' );
 		if ( $registered && ! empty( $registered->editor_script_handles ) ) {
 			foreach ( $registered->editor_script_handles as $handle ) {
@@ -2180,6 +2191,7 @@ class Immich_Media_Picker {
 		// on the frontend.
 		wp_enqueue_style( 'wp-block-gallery' );
 		wp_enqueue_style( 'wp-block-image' );
+		wp_enqueue_style( 'immich-album-block' );
 
 		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
 		$payload = $this->fetch_album_assets( $album_id, $sort );
@@ -2213,15 +2225,21 @@ class Immich_Media_Picker {
 		// existing public-attachment branch).
 		$post_id = (int) get_the_ID();
 
-		// We render `<figure class="wp-block-image">` children directly rather
-		// than going through render_block(['blockName' => 'core/image', ...]):
-		// when core/image's lightbox attribute is set, its render wraps each
-		// figure in a `<div class="wp-lightbox-container">`, which breaks the
-		// gallery's flex column math (it sets widths on `figure.wp-block-image`
-		// but the flex children are now divs flowing at their intrinsic
-		// content width). The current trade-off: we ship a working columns-N
-		// layout; the WP 6.4+ core lightbox is not wired up yet. Tracked as a
-		// follow-up.
+		// Per-figure width inline. Mirrors core's gallery `.columns-N` CSS
+		// rule shape exactly, except core's lives inside `@media (min-width:
+		// 600px)` so it doesn't apply on narrow viewports — emitting inline
+		// makes the column count work everywhere. `width:` is also more
+		// authoritative than `flex-basis` and wins against whatever default
+		// flex behavior the theme might apply to the figures.
+		$gap_px        = 16;
+		$pct           = 100.0 / max( 1, $columns );
+		$frac          = ( max( 1, $columns ) - 1 ) / max( 1, $columns );
+		$figure_style  = sprintf(
+			'width:calc(%.5f%% - var(--wp--style--unstable-gallery-gap,16px) * %.5f);',
+			$pct,
+			$frac
+		);
+
 		$children = '';
 		foreach ( $assets as $a ) {
 			$asset_id = isset( $a['id'] ) ? (string) $a['id'] : '';
@@ -2232,11 +2250,11 @@ class Immich_Media_Picker {
 			if ( '' === $url ) {
 				continue;
 			}
-			$alt      = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
-			$caption  = $show_captions && '' !== $alt
+			$alt     = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
+			$caption = $show_captions && '' !== $alt
 				? '<figcaption class="wp-element-caption">' . esc_html( $alt ) . '</figcaption>'
 				: '';
-			$children .= '<figure class="wp-block-image size-large">'
+			$children .= '<figure class="wp-block-image size-large" style="' . esc_attr( $figure_style ) . '">'
 				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
 				. $caption
 				. '</figure>';
@@ -2270,8 +2288,26 @@ class Immich_Media_Picker {
 				. ' &rarr;</a></p>';
 		}
 
+		// Standard WP gallery markup: flex layout via the core `is-layout-flex`
+		// + `wp-block-gallery-is-layout-flex` classes. Set both the CSS
+		// variable and the actual `gap:` property inline so the gap matches
+		// what our per-figure width calc assumes. Without forcing `gap:`,
+		// themes can override it via blockGap (theme.json) and produce an
+		// off-by-one column count: each row overflows by (N-1)*(real_gap-16)
+		// and the last item wraps.
+		$wrapper_style = sprintf(
+			'--wp--style--unstable-gallery-gap:%dpx;gap:%dpx;',
+			$gap_px,
+			$gap_px
+		);
+		$lightbox      = ! empty( $attrs['lightbox'] );
+		$lightbox_attr = $lightbox ? ' data-immich-lightbox="1"' : '';
+
 		return $stale_notice
-			. '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex">'
+			. '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex immich-album-gallery"'
+			. ' style="' . esc_attr( $wrapper_style ) . '"'
+			. $lightbox_attr
+			. '>'
 			. $children
 			. '</figure>'
 			. $more_link;
