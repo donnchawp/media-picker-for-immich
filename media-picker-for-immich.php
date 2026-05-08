@@ -1933,14 +1933,6 @@ class Immich_Media_Picker {
 	}
 
 	/**
-	 * Render the immich/album-gallery block.
-	 *
-	 * Stub — full implementation in Task 5+.
-	 *
-	 * @param array $attrs Block attributes.
-	 * @return string Rendered HTML.
-	 */
-	/**
 	 * Render an editor-only error notice for the album block.
 	 *
 	 * Anonymous viewers get an empty string; logged-in editors with
@@ -1959,6 +1951,18 @@ class Immich_Media_Picker {
 			. '</div>';
 	}
 
+	/**
+	 * Render the immich/album-gallery Gutenberg block.
+	 *
+	 * Server-side renderer for the dynamic block. Fetches the album from
+	 * Immich (with caching and stale fallback), emits core gallery markup,
+	 * and prepends an editor-only stale-cache notice when applicable.
+	 *
+	 * @param array $attrs Block attributes (albumId, columns, imageSize,
+	 *                     sortOrder, limit, lightbox, showCaptions).
+	 * @return string Rendered HTML; empty for visitors when the album is
+	 *                missing/unloadable; an inline error notice for editors.
+	 */
 	public function render_album_block( array $attrs ): string {
 		$album_id = isset( $attrs['albumId'] ) ? (string) $attrs['albumId'] : '';
 		if ( '' === $album_id || ! preg_match( self::UUID_PATTERN, $album_id ) ) {
