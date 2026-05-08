@@ -999,6 +999,17 @@ class Immich_Media_Picker {
 	}
 
 	/**
+	 * Extract the HTTP status from an api_request() WP_Error, if present.
+	 *
+	 * @param \WP_Error $error Error returned by api_request().
+	 * @return int 0 if the error is not from a non-2xx response or status is missing.
+	 */
+	private function api_error_status( \WP_Error $error ): int {
+		$data = $error->get_error_data();
+		return is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 0;
+	}
+
+	/**
 	 * Probe a single Immich endpoint with the given URL/key. Used by the
 	 * Test Connection button so we can hit values that haven't been saved
 	 * to the database yet.
@@ -1945,8 +1956,13 @@ class Immich_Media_Picker {
 		if ( ! current_user_can( 'edit_posts' ) ) {
 			return '';
 		}
-		return '<div class="immich-album-error" style="border:1px solid #d63638;padding:8px;color:#d63638;">'
-			. esc_html__( 'Could not load Immich album.', 'media-picker-for-immich' )
+		$is_not_found = ( 404 === $this->api_error_status( $error ) );
+		$message      = $is_not_found
+			? __( 'Album was removed from Immich.', 'media-picker-for-immich' )
+			: __( 'Could not load Immich album.', 'media-picker-for-immich' );
+		$color        = $is_not_found ? '#dba617' : '#d63638';
+		return '<div class="immich-album-error" style="border:1px solid ' . esc_attr( $color ) . ';padding:8px;color:' . esc_attr( $color ) . ';">'
+			. esc_html( $message )
 			. ' <code>' . esc_html( $error->get_error_message() ) . '</code>'
 			. '</div>';
 	}
@@ -1982,6 +1998,11 @@ class Immich_Media_Picker {
 
 		$assets = $payload['assets'];
 		if ( empty( $assets ) ) {
+			if ( current_user_can( 'edit_posts' ) ) {
+				return '<div class="immich-album-empty" style="border:1px dashed #ccc;padding:8px;color:#757575;">'
+					. esc_html__( 'This Immich album is empty.', 'media-picker-for-immich' )
+					. '</div>';
+			}
 			return '';
 		}
 
@@ -2137,10 +2158,13 @@ class Immich_Media_Picker {
 
 		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ) );
 		if ( is_wp_error( $response ) ) {
-			$stale = $this->read_stale_transient( $key );
-			if ( false !== $stale && is_array( $stale ) ) {
-				$stale['stale'] = true;
-				return $stale;
+			$is_not_found = ( 404 === $this->api_error_status( $response ) );
+			if ( ! $is_not_found ) {
+				$stale = $this->read_stale_transient( $key );
+				if ( false !== $stale && is_array( $stale ) ) {
+					$stale['stale'] = true;
+					return $stale;
+				}
 			}
 			return $response;
 		}
