@@ -750,6 +750,19 @@ class Immich_Media_Picker {
 				status_header( 403 );
 				exit( 'Invalid album token.' );
 			}
+			// Tokens have no expiry, so without a post-status gate a URL minted
+			// in editor preview or before unpublishing keeps streaming Immich
+			// assets anonymously. Anonymous requests require the post to be
+			// published; private/draft/etc. require an authenticated reader.
+			$post_status = get_post_status( $album_post );
+			if ( false === $post_status || 'trash' === $post_status ) {
+				status_header( 404 );
+				exit( 'Post not found.' );
+			}
+			if ( 'publish' !== $post_status && ! current_user_can( 'read_post', $album_post ) ) {
+				status_header( 403 );
+				exit( 'Forbidden.' );
+			}
 			$author_id = (int) get_post_field( 'post_author', $album_post );
 			if ( 0 === $author_id ) {
 				status_header( 404 );
@@ -1138,8 +1151,8 @@ class Immich_Media_Picker {
 		exit;
 	}
 
-	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null ): array|\WP_Error {
-		$api_key = $this->get_api_key();
+	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null, int $user_id = 0 ): array|\WP_Error {
+		$api_key = $this->get_api_key( $user_id );
 		if ( '' === $api_key ) {
 			return new \WP_Error( 'no_api_key', __( 'No Immich API key configured.', 'media-picker-for-immich' ) );
 		}
@@ -2203,8 +2216,14 @@ class Immich_Media_Picker {
 		wp_enqueue_style( 'wp-block-image' );
 		wp_enqueue_style( 'immich-album-block' );
 
+		// Post id is needed both to authorise the album list fetch (per-user
+		// API key falls back to the post author when no site-wide key is set,
+		// matching the asset proxy) and to sign each asset URL further down.
+		$post_id   = (int) get_the_ID();
+		$author_id = $post_id > 0 ? (int) get_post_field( 'post_author', $post_id ) : 0;
+
 		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
-		$payload = $this->fetch_album_assets( $album_id, $sort );
+		$payload = $this->fetch_album_assets( $album_id, $sort, $author_id );
 		if ( is_wp_error( $payload ) ) {
 			return $this->render_album_error_notice( $payload );
 		}
@@ -2228,12 +2247,6 @@ class Immich_Media_Picker {
 		$size          = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
 		$columns       = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
 		$show_captions = ! empty( $attrs['showCaptions'] );
-
-		// Post id is needed to sign each asset URL so the proxy authorises
-		// the request without an attachment lookup; the proxy also derives
-		// the post-author from this id for API-key lookup (matching the
-		// existing public-attachment branch).
-		$post_id = (int) get_the_ID();
 
 		// Per-figure width inline. Mirrors core's gallery `.columns-N` CSS
 		// rule shape exactly, except core's lives inside `@media (min-width:
@@ -2431,11 +2444,15 @@ class Immich_Media_Picker {
 	/**
 	 * Fetch and prepare the asset list for an album, with caching and hard cap.
 	 *
-	 * @param string $album_id Validated UUID.
-	 * @param string $sort     Sort key (default 'default'; expanded in Task 8).
+	 * @param string $album_id  Validated UUID.
+	 * @param string $sort      Sort key (default 'default'; expanded in Task 8).
+	 * @param int    $author_id Post author whose per-user API key authorises the
+	 *                          fetch when no site-wide key is configured. Mirrors
+	 *                          handle_proxy_request()'s author lookup so cold-cache
+	 *                          renders work for logged-out visitors.
 	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
 	 */
-	private function fetch_album_assets( string $album_id, string $sort = 'default' ) {
+	private function fetch_album_assets( string $album_id, string $sort = 'default', int $author_id = 0 ) {
 		$key    = $this->album_cache_key( $album_id, $sort );
 		$cached = get_transient( $key );
 		if ( false !== $cached && is_array( $cached ) ) {
@@ -2443,7 +2460,7 @@ class Immich_Media_Picker {
 			return $cached;
 		}
 
-		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ) );
+		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ), 'GET', null, $author_id );
 		if ( is_wp_error( $response ) ) {
 			$is_not_found = ( 404 === $this->api_error_status( $response ) );
 			if ( ! $is_not_found ) {
