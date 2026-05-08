@@ -88,6 +88,14 @@ Add the "Immich Album Gallery" block from the inserter, click "Pick album", and 
 
 For large albums where the global cap (default 100) trims the rendered set, the block has an optional "Show 'View on Immich' link" toggle that appends a link to the album in the Immich web UI. Leave it off unless your Immich URL is reachable from your visitors' browsers — many self-hosted setups put Immich behind a VPN or on a Docker-internal hostname that won't resolve outside the LAN.
 
+= I use Nginx — do I need extra server config? =
+
+Yes. The plugin caches proxied Immich binaries under `wp-content/uploads/immich-cache/`, and the proxy endpoint enforces post-status authorisation on every request. On Apache the plugin drops a deny-all `.htaccess` into that directory automatically so nothing else can serve the cached files. Nginx ignores `.htaccess`, so you need an equivalent rule in your site's server block:
+
+`location ^~ /wp-content/uploads/immich-cache/ { deny all; return 404; }`
+
+Without that, a visitor who captured a cached asset URL from rendered HTML could fetch the file directly even after the post is unpublished or made private.
+
 == Screenshots ==
 
 1. The Immich tab in the WordPress media picker, showing recent photos with search and people filter.

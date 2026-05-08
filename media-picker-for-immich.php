@@ -487,7 +487,7 @@ class Immich_Media_Picker {
 		}
 
 		$now = time();
-		foreach ( array( 'thumbnail', 'original', 'video' ) as $type ) {
+		foreach ( self::CACHE_TYPES as $type ) {
 			$dir = $cache_root . '/' . $type;
 			if ( ! is_dir( $dir ) ) {
 				continue;
@@ -824,11 +824,46 @@ class Immich_Media_Picker {
 	}
 
 	/**
-	 * Return the root cache directory inside the uploads folder.
+	 * Return the root cache directory inside the uploads folder. Creates
+	 * the directory on first use and drops a deny-all .htaccess + an
+	 * index.php stub so the cached binaries can't be fetched directly via
+	 * the public uploads URL — handle_proxy_request() is the only path
+	 * that should serve them, so it can enforce post-status auth.
+	 *
+	 * (Apache only. Nginx ignores .htaccess; the plugin docs note that
+	 * Nginx installs need an equivalent `location` block to deny direct
+	 * access to /wp-content/uploads/immich-cache/.)
 	 */
 	private function get_cache_root(): string {
 		$upload_dir = wp_upload_dir();
-		return $upload_dir['basedir'] . '/immich-cache';
+		$root       = $upload_dir['basedir'] . '/immich-cache';
+		if ( wp_mkdir_p( $root ) ) {
+			$this->ensure_cache_root_protected( $root );
+		}
+		return $root;
+	}
+
+	private function ensure_cache_root_protected( string $root ): void {
+		$htaccess = $root . '/.htaccess';
+		if ( ! file_exists( $htaccess ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- one-shot drop, runs on cache-root creation only
+			file_put_contents(
+				$htaccess,
+				"# Block direct access to cached Immich binaries; the proxy enforces auth.\n"
+				. "Options -Indexes\n"
+				. "<IfModule mod_authz_core.c>\n"
+				. "    Require all denied\n"
+				. "</IfModule>\n"
+				. "<IfModule !mod_authz_core.c>\n"
+				. "    Deny from all\n"
+				. "</IfModule>\n"
+			);
+		}
+		$index = $root . '/index.php';
+		if ( ! file_exists( $index ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- one-shot drop, runs on cache-root creation only
+			file_put_contents( $index, "<?php\n// Silence is golden.\n" );
+		}
 	}
 
 	private function get_cache_paths( string $type, string $id ): array {
