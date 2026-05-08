@@ -97,7 +97,64 @@
 			return null;
 		},
 
+		_isAlbumMode: function () {
+			try {
+				var lib = this.controller && this.controller.state() && this.controller.state().get( 'library' );
+				if ( ! lib ) { return false; }
+				return lib.props.get( 'type' ) === 'immich-album';
+			} catch ( e ) { return false; }
+		},
+
+		_renderAlbumGrid: function () {
+			var self = this;
+			this.$el.append(
+				'<div class="immich-status">' + _.escape( __( 'Loading albums…', 'media-picker-for-immich' ) ) + '</div>' +
+				'<div class="immich-album-grid"></div>'
+			);
+
+			wp.ajax.post( 'immich_albums', { nonce: config.nonce } )
+				.done( function ( data ) {
+					self.$el.find( '.immich-status' ).hide();
+					var $grid = self.$el.find( '.immich-album-grid' );
+					if ( ! $grid.length ) { return; }
+					if ( ! data || ! data.items || ! data.items.length ) {
+						$grid.html( '<p class="immich-empty">' + _.escape( __( 'No albums in this Immich server.', 'media-picker-for-immich' ) ) + '</p>' );
+						return;
+					}
+					var html = data.items.map( function ( a ) {
+						return '<button type="button" class="immich-album-tile"' +
+							' data-album-id="' + _.escape( a.id ) + '"' +
+							' data-album-name="' + _.escape( a.name ) + '">' +
+							( a.thumbnail
+								? '<img class="immich-album-tile-cover" src="' + _.escape( a.thumbnail ) + '" alt="" />'
+								: '<span class="immich-album-tile-cover is-empty"></span>' ) +
+							'<span class="immich-album-tile-name">' + _.escape( a.name ) + '</span>' +
+							'<span class="immich-album-tile-count">' + _.escape( String( a.count ) ) + '</span>' +
+							'</button>';
+					} ).join( '' );
+					$grid.html( html );
+				} )
+				.fail( function ( resp ) {
+					self.$el.find( '.immich-status' )
+						.text( ( resp && resp.message ) ? resp.message : __( 'Could not load albums.', 'media-picker-for-immich' ) );
+				} );
+
+			this.$el.off( 'click.immichAlbums' ).on( 'click.immichAlbums', '.immich-album-tile', function () {
+				var $btn = $( this );
+				self.controller.trigger( 'immich:album-selected', {
+					id:   $btn.attr( 'data-album-id' ),
+					name: $btn.attr( 'data-album-name' )
+				} );
+			} );
+		},
+
 		render: function () {
+			if ( this._isAlbumMode() ) {
+				this.$el.empty().addClass( 'immich-browser is-album-mode' );
+				this._renderAlbumGrid();
+				return this;
+			}
+
 			var headerLabel = __( 'Previously added', 'media-picker-for-immich' );
 			var headerHelp  = __( 'Assets you have previously selected or copied from Immich. Reuse them without round-tripping to the server.', 'media-picker-for-immich' );
 			var handleLabel = __( 'Resize the cached assets pane', 'media-picker-for-immich' );

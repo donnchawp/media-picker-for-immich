@@ -423,3 +423,44 @@
 	padding: 40px 16px;
 	margin: 0;
 }
+
+/* Album-only mode */
+.immich-browser.is-album-mode .immich-toolbar,
+.immich-browser.is-album-mode .immich-used-pane,
+.immich-browser.is-album-mode .immich-split-handle {
+	display: none;
+}
+.immich-album-grid {
+	display: grid;
+	grid-template-columns: repeat( auto-fill, minmax( 160px, 1fr ) );
+	gap: 12px;
+	padding: 12px;
+	align-content: start;
+}
+.immich-album-tile {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	cursor: pointer;
+	background: none;
+	border: 1px solid transparent;
+	padding: 6px;
+	border-radius: 4px;
+	text-align: left;
+}
+.immich-album-tile:hover,
+.immich-album-tile:focus-visible {
+	border-color: var( --wp-admin-theme-color, #2271b1 );
+	outline: none;
+}
+.immich-album-tile-cover {
+	width: 100%;
+	aspect-ratio: 1 / 1;
+	object-fit: cover;
+	border-radius: 4px;
+	display: block;
+	background: #e0e0e0;
+}
+.immich-album-tile-cover.is-empty { background: #d0d0d0; }
+.immich-album-tile-name { font-weight: 600; line-height: 1.3; }
+.immich-album-tile-count { color: #757575; font-size: 12px; }

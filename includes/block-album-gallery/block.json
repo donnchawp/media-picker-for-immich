@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/block.json",
+  "apiVersion": 3,
+  "name": "immich/album-gallery",
+  "title": "Immich Album Gallery",
+  "category": "media",
+  "icon": "format-gallery",
+  "description": "Embed a live Immich album as a gallery.",
+  "textdomain": "media-picker-for-immich",
+  "attributes": {
+    "albumId":      { "type": "string",  "default": "" },
+    "columns":      { "type": "number",  "default": 3 },
+    "imageSize":    { "type": "string",  "default": "preview" },
+    "sortOrder":    { "type": "string",  "default": "default" },
+    "limit":        { "type": "number",  "default": 0 },
+    "lightbox":      { "type": "boolean", "default": true },
+    "showCaptions":  { "type": "boolean", "default": false },
+    "showAlbumLink": { "type": "boolean", "default": false }
+  },
+  "supports": {
+    "html":  false,
+    "align": ["wide", "full"]
+  },
+  "usesContext": ["postId"],
+  "editorScript": "file:../../assets/js/immich-album-block.js",
+  "viewScript":   "file:../../assets/js/immich-album-block-frontend.js",
+  "style":        "file:../../assets/css/immich-album-block.css",
+  "render":       "file:./render.php"
+}

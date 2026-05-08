@@ -3,7 +3,7 @@
  * Plugin Name: Media Picker for Immich
  * Description: Use photos and videos from your Immich server in WordPress without copying files, or import them into the media library.
  * Version: 0.1.0
- * Requires at least: 6.4
+ * Requires at least: 6.5
  * Requires PHP: 8.0
  * Author: Donncha
  * Text Domain: media-picker-for-immich
@@ -27,6 +27,24 @@ class Immich_Media_Picker {
 	private const COPY_SIZE_CHOICES = array( 'original', 'fullsize', 'preview', 'thumbnail' );
 
 	/**
+	 * Singleton instance, set in the constructor.
+	 */
+	private static ?self $the_instance = null;
+
+	/**
+	 * Retrieve the running plugin instance.
+	 *
+	 * Used by the block render shim (`includes/block-album-gallery/render.php`)
+	 * to dispatch into the class method without holding a separate handle.
+	 */
+	public static function instance(): self {
+		if ( null === self::$the_instance ) {
+			self::$the_instance = new self();
+		}
+		return self::$the_instance;
+	}
+
+	/**
 	 * The minimum Immich API key permissions the plugin needs to function.
 	 *
 	 * Single source of truth used by both the Settings page and the per-user
@@ -38,6 +56,7 @@ class Immich_Media_Picker {
 			'asset.view'     => __( 'Stream thumbnails and video playback through the proxy.', 'media-picker-for-immich' ),
 			'asset.download' => __( 'Fetch full-resolution originals for the proxy and the Copy/import path.', 'media-picker-for-immich' ),
 			'person.read'    => __( 'Populate the people filter dropdown and people thumbnails.', 'media-picker-for-immich' ),
+			'album.read'     => __( 'List albums in the picker and fetch their assets for the Album Gallery block.', 'media-picker-for-immich' ),
 		);
 	}
 
@@ -71,11 +90,14 @@ class Immich_Media_Picker {
 		add_action( 'wp_ajax_immich_used_assets', array( $this, 'ajax_used_assets' ) );
 		add_action( 'wp_ajax_immich_save_picker_split', array( $this, 'ajax_save_picker_split' ) );
 		add_action( 'wp_ajax_immich_test_connection', array( $this, 'ajax_test_connection' ) );
+		add_action( 'wp_ajax_immich_albums', array( $this, 'ajax_albums' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
 		add_action( 'wp_enqueue_media', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
 		add_action( 'init', array( $this, 'maybe_schedule_add_mode_upgrade' ) );
+		add_action( 'init', array( $this, 'register_blocks' ) );
+		add_action( 'save_post', array( $this, 'on_post_save' ), 10, 2 );
 		add_action( 'immich_upgrade_add_mode', array( $this, 'run_add_mode_upgrade' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
@@ -242,6 +264,7 @@ class Immich_Media_Picker {
 					</p>
 				</form>
 			<?php endif; ?>
+
 		</div>
 		<?php
 	}
@@ -464,7 +487,7 @@ class Immich_Media_Picker {
 		}
 
 		$now = time();
-		foreach ( array( 'thumbnail', 'original', 'video' ) as $type ) {
+		foreach ( self::CACHE_TYPES as $type ) {
 			$dir = $cache_root . '/' . $type;
 			if ( ! is_dir( $dir ) ) {
 				continue;
@@ -533,6 +556,67 @@ class Immich_Media_Picker {
 	}
 
 	/**
+	 * Build a preview-nonce-signed proxy URL for an asset.
+	 *
+	 * Lets logged-in users with upload_files capability fetch a thumbnail
+	 * for an asset that is not (yet) a WordPress attachment. Used by the
+	 * album picker to render album cover thumbnails.
+	 *
+	 * @param string $asset_id Asset UUID. Empty string returns ''.
+	 * @param string $size     'thumbnail', 'preview', 'fullsize', or 'video'.
+	 * @return string URL, or '' if asset_id is empty/invalid.
+	 */
+	private function preview_proxy_url( string $asset_id, string $size = 'thumbnail' ): string {
+		if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) ) {
+			return '';
+		}
+		$allowed = array( 'thumbnail', 'preview', 'fullsize', 'video' );
+		if ( ! in_array( $size, $allowed, true ) ) {
+			$size = 'thumbnail';
+		}
+		$args = array(
+			'immich_media_proxy' => $size,
+			'id'                 => $asset_id,
+			'preview_nonce'      => wp_create_nonce( 'immich_preview' ),
+		);
+		return add_query_arg( $args, home_url( '/' ) );
+	}
+
+	/**
+	 * Build a signed proxy URL for an asset embedded in an album-gallery block.
+	 *
+	 * Lets anonymous frontend visitors fetch images that are not WP attachments.
+	 * Authorisation is via HMAC over (asset_id, post_id) with wp_salt('nonce').
+	 * Stable across page loads (no nonce-tick expiry) so cached frontend HTML
+	 * keeps working for the post's lifetime, and resilient against tampering:
+	 * a request can only succeed if the token matches the (asset, post) pair.
+	 *
+	 * @param string $asset_id Asset UUID.
+	 * @param string $size     'thumbnail', 'preview', 'fullsize', 'original', or 'video'.
+	 * @param int    $post_id  Post containing the album block. Used by the
+	 *                         proxy to derive the post-author for API-key
+	 *                         lookup (matching the existing public branch).
+	 * @return string URL, or '' if any input is invalid.
+	 */
+	private function album_proxy_url( string $asset_id, string $size, int $post_id ): string {
+		if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) || $post_id <= 0 ) {
+			return '';
+		}
+		$allowed = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video' );
+		if ( ! in_array( $size, $allowed, true ) ) {
+			$size = 'preview';
+		}
+		$token = hash_hmac( 'sha256', $asset_id . '|' . $post_id, wp_salt( 'nonce' ) );
+		$args  = array(
+			'immich_media_proxy' => $size,
+			'id'                 => $asset_id,
+			'album_post'         => $post_id,
+			'album_token'        => $token,
+		);
+		return add_query_arg( $args, home_url( '/' ) );
+	}
+
+	/**
 	 * Public proxy endpoint — intentionally unauthenticated so proxied images
 	 * work in published posts for anonymous visitors. Only assets that have a
 	 * corresponding WordPress attachment (created via "Use" or "Copy") are
@@ -547,7 +631,7 @@ class Immich_Media_Picker {
 		}
 
 		$type = sanitize_key( $_GET['immich_media_proxy'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		if ( ! in_array( $type, array( 'thumbnail', 'preview', 'original', 'video' ), true ) ) {
+		if ( ! in_array( $type, array( 'thumbnail', 'preview', 'fullsize', 'original', 'video' ), true ) ) {
 			status_header( 400 );
 			exit( 'Invalid type.' );
 		}
@@ -562,12 +646,59 @@ class Immich_Media_Picker {
 		// been added yet (used by the picker preview overlay). Reuses the
 		// same cache + Range support as the public path.
 		$preview_nonce = isset( $_GET['preview_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['preview_nonce'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$album_token   = isset( $_GET['album_token'] ) ? sanitize_text_field( wp_unslash( $_GET['album_token'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$album_post    = isset( $_GET['album_post'] ) ? absint( $_GET['album_post'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
 		if ( '' !== $preview_nonce ) {
 			if ( ! wp_verify_nonce( $preview_nonce, 'immich_preview' ) || ! current_user_can( 'upload_files' ) ) {
 				status_header( 403 );
 				exit( 'Forbidden.' );
 			}
 			$author_id = get_current_user_id();
+		} elseif ( '' !== $album_token && $album_post > 0 ) {
+			// Album-block path: signed proxy URL emitted by render_album_block.
+			// HMAC over (asset_id, post_id) with wp_salt('nonce'). Stable across
+			// page loads (no nonce-tick expiry) so cached frontend HTML stays
+			// valid for the lifetime of the post.
+			//
+			// The token does not bind to size, so without restricting the
+			// accepted sizes a visitor could swap a rendered preview URL to
+			// `original` or `video` and pull the raw file with full EXIF/GPS
+			// or a full video stream. Album blocks only render image sizes,
+			// so accept those and reject the originals/video escalations.
+			if ( ! in_array( $type, array( 'thumbnail', 'preview', 'fullsize' ), true ) ) {
+				status_header( 403 );
+				exit( 'Forbidden.' );
+			}
+			$expected = hash_hmac( 'sha256', $id . '|' . $album_post, wp_salt( 'nonce' ) );
+			if ( ! hash_equals( $expected, $album_token ) ) {
+				status_header( 403 );
+				exit( 'Invalid album token.' );
+			}
+			// Tokens have no expiry, so without a post-status gate a URL minted
+			// in editor preview or before unpublishing keeps streaming Immich
+			// assets anonymously. Anonymous requests require the post to be
+			// published AND not password-protected; private/draft/password-
+			// protected posts require an authenticated reader. (post_status is
+			// 'publish' for password-protected posts, and current_user_can(
+			// 'read_post' ) does not consult the password cookie, so the
+			// password check has to be explicit.)
+			$post_status = get_post_status( $album_post );
+			if ( false === $post_status || 'trash' === $post_status ) {
+				status_header( 404 );
+				exit( 'Post not found.' );
+			}
+			if ( ( 'publish' !== $post_status || post_password_required( $album_post ) )
+				&& ! current_user_can( 'read_post', $album_post )
+			) {
+				status_header( 403 );
+				exit( 'Forbidden.' );
+			}
+			$author_id = (int) get_post_field( 'post_author', $album_post );
+			if ( 0 === $author_id ) {
+				status_header( 404 );
+				exit( 'Post not found.' );
+			}
 		} else {
 			// Only proxy assets that have been explicitly added via the plugin.
 			$attachments = get_posts( array(
@@ -588,6 +719,7 @@ class Immich_Media_Picker {
 		$allowed_types = array(
 			'thumbnail' => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'preview'   => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
+			'fullsize'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'original'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif', 'image/tiff', 'video/mp4', 'video/quicktime' ),
 			'video'     => array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' ),
 		);
@@ -633,6 +765,7 @@ class Immich_Media_Picker {
 		$api_url = match ( $type ) {
 			'thumbnail' => $base . '/api/assets/' . $id . '/thumbnail',
 			'preview'   => $base . '/api/assets/' . $id . '/thumbnail?size=preview',
+			'fullsize'  => $base . '/api/assets/' . $id . '/thumbnail?size=fullsize',
 			'video'     => $base . '/api/assets/' . $id . '/video/playback',
 			default     => $base . '/api/assets/' . $id . '/original',
 		};
@@ -691,11 +824,46 @@ class Immich_Media_Picker {
 	}
 
 	/**
-	 * Return the root cache directory inside the uploads folder.
+	 * Return the root cache directory inside the uploads folder. Creates
+	 * the directory on first use and drops a deny-all .htaccess + an
+	 * index.php stub so the cached binaries can't be fetched directly via
+	 * the public uploads URL — handle_proxy_request() is the only path
+	 * that should serve them, so it can enforce post-status auth.
+	 *
+	 * (Apache only. Nginx ignores .htaccess; the plugin docs note that
+	 * Nginx installs need an equivalent `location` block to deny direct
+	 * access to /wp-content/uploads/immich-cache/.)
 	 */
 	private function get_cache_root(): string {
 		$upload_dir = wp_upload_dir();
-		return $upload_dir['basedir'] . '/immich-cache';
+		$root       = $upload_dir['basedir'] . '/immich-cache';
+		if ( wp_mkdir_p( $root ) ) {
+			$this->ensure_cache_root_protected( $root );
+		}
+		return $root;
+	}
+
+	private function ensure_cache_root_protected( string $root ): void {
+		$htaccess = $root . '/.htaccess';
+		if ( ! file_exists( $htaccess ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- one-shot drop, runs on cache-root creation only
+			file_put_contents(
+				$htaccess,
+				"# Block direct access to cached Immich binaries; the proxy enforces auth.\n"
+				. "Options -Indexes\n"
+				. "<IfModule mod_authz_core.c>\n"
+				. "    Require all denied\n"
+				. "</IfModule>\n"
+				. "<IfModule !mod_authz_core.c>\n"
+				. "    Deny from all\n"
+				. "</IfModule>\n"
+			);
+		}
+		$index = $root . '/index.php';
+		if ( ! file_exists( $index ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- one-shot drop, runs on cache-root creation only
+			file_put_contents( $index, "<?php\n// Silence is golden.\n" );
+		}
 	}
 
 	private function get_cache_paths( string $type, string $id ): array {
@@ -708,7 +876,7 @@ class Immich_Media_Picker {
 		);
 	}
 
-	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'original', 'video' );
+	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video' );
 
 	private const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
 
@@ -909,8 +1077,8 @@ class Immich_Media_Picker {
 		exit;
 	}
 
-	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null ): array|\WP_Error {
-		$api_key = $this->get_api_key();
+	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null, int $user_id = 0 ): array|\WP_Error {
+		$api_key = $this->get_api_key( $user_id );
 		if ( '' === $api_key ) {
 			return new \WP_Error( 'no_api_key', __( 'No Immich API key configured.', 'media-picker-for-immich' ) );
 		}
@@ -948,6 +1116,17 @@ class Immich_Media_Picker {
 		}
 
 		return $json ?? array();
+	}
+
+	/**
+	 * Extract the HTTP status from an api_request() WP_Error, if present.
+	 *
+	 * @param \WP_Error $error Error returned by api_request().
+	 * @return int 0 if the error is not from a non-2xx response or status is missing.
+	 */
+	private function api_error_status( \WP_Error $error ): int {
+		$data = $error->get_error_data();
+		return is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 0;
 	}
 
 	/**
@@ -1034,6 +1213,7 @@ class Immich_Media_Picker {
 
 		$probes['asset.read']  = $this->probe_immich( $base_url, $api_key, '/api/search/metadata', 'POST', array( 'size' => 1, 'page' => 1 ) );
 		$probes['person.read'] = $this->probe_immich( $base_url, $api_key, '/api/people?size=1' );
+		$probes['album.read']  = $this->probe_immich( $base_url, $api_key, '/api/albums' );
 
 		$asset_id = '';
 		if ( $probes['asset.read']['ok'] && is_array( $probes['asset.read']['body'] ) ) {
@@ -1050,7 +1230,7 @@ class Immich_Media_Picker {
 			}
 		}
 
-		foreach ( array( 'asset.read', 'asset.view', 'asset.download', 'person.read' ) as $slug ) {
+		foreach ( array( 'asset.read', 'asset.view', 'asset.download', 'person.read', 'album.read' ) as $slug ) {
 			if ( ! isset( $probes[ $slug ] ) ) {
 				$scopes[ $slug ] = 'unverified';
 			} else {
@@ -1523,6 +1703,39 @@ class Immich_Media_Picker {
 		wp_send_json_success( $result );
 	}
 
+	/**
+	 * AJAX: list Immich albums for the picker.
+	 */
+	public function ajax_albums(): void {
+		if ( ! $this->verify_ajax_request() ) {
+			return;
+		}
+		$response = $this->api_request( '/api/albums' );
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error(
+				array(
+					'message' => $response->get_error_message(),
+					'code'    => $response->get_error_code(),
+				)
+			);
+			return;
+		}
+		$items = array_map(
+			function ( $a ) {
+				return array(
+					'id'        => isset( $a['id'] ) ? (string) $a['id'] : '',
+					'name'      => isset( $a['albumName'] ) ? (string) $a['albumName'] : '',
+					'count'     => isset( $a['assetCount'] ) ? (int) $a['assetCount'] : 0,
+					'thumbnail' => $this->preview_proxy_url( isset( $a['albumThumbnailAssetId'] ) ? (string) $a['albumThumbnailAssetId'] : '', 'thumbnail' ),
+				);
+			},
+			(array) $response
+		);
+		// Filter out malformed entries (no id).
+		$items = array_values( array_filter( $items, function ( $i ) { return '' !== $i['id']; } ) );
+		wp_send_json_success( array( 'items' => $items ) );
+	}
+
 	public function ajax_thumbnail(): void {
 		if ( ! $this->verify_ajax_request() ) {
 			return;
@@ -1838,8 +2051,472 @@ class Immich_Media_Picker {
 			'total'    => $query->found_posts,
 		) );
 	}
+
+	/**
+	 * Register Gutenberg blocks shipped by this plugin.
+	 */
+	public function register_blocks(): void {
+		// Frontend CSS for the album gallery. Registered explicitly (rather
+		// than relying on block.json's `style:` field reaching the right
+		// auto-generated handle) so we can wp_enqueue_style() it directly
+		// from render_album_block.
+		wp_register_style(
+			'immich-album-block',
+			plugins_url( 'assets/css/immich-album-block.css', __FILE__ ),
+			array(),
+			'1.0.0'
+		);
+
+		$registered = register_block_type( __DIR__ . '/includes/block-album-gallery' );
+		if ( $registered && ! empty( $registered->editor_script_handles ) ) {
+			foreach ( $registered->editor_script_handles as $handle ) {
+				wp_set_script_translations( $handle, 'media-picker-for-immich' );
+			}
+		}
+	}
+
+	/**
+	 * Render an editor-only error notice for the album block.
+	 *
+	 * Anonymous viewers get an empty string; logged-in editors with
+	 * edit_posts capability see a diagnostic notice.
+	 *
+	 * @param \WP_Error $error The error to display.
+	 * @return string Empty string for anonymous viewers, notice div for editors.
+	 */
+	private function render_album_error_notice( \WP_Error $error ): string {
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			return '';
+		}
+		$is_not_found = ( 404 === $this->api_error_status( $error ) );
+		$message      = $is_not_found
+			? __( 'Album was removed from Immich.', 'media-picker-for-immich' )
+			: __( 'Could not load Immich album.', 'media-picker-for-immich' );
+		$color        = $is_not_found ? '#dba617' : '#d63638';
+		return '<div class="immich-album-error" style="border:1px solid ' . esc_attr( $color ) . ';padding:8px;color:' . esc_attr( $color ) . ';">'
+			. esc_html( $message )
+			. ' <code>' . esc_html( $error->get_error_message() ) . '</code>'
+			. '</div>';
+	}
+
+	/**
+	 * Render the immich/album-gallery Gutenberg block.
+	 *
+	 * Server-side renderer for the dynamic block. Fetches the album from
+	 * Immich (with caching and stale fallback), emits core gallery markup,
+	 * and prepends an editor-only stale-cache notice when applicable.
+	 *
+	 * @param array $attrs Block attributes (albumId, columns, imageSize,
+	 *                     sortOrder, limit, lightbox, showCaptions).
+	 * @return string Rendered HTML; empty for visitors when the album is
+	 *                missing/unloadable; an inline error notice for editors.
+	 */
+	public function render_album_block( array $attrs, ?\WP_Block $block = null ): string {
+		$album_id = isset( $attrs['albumId'] ) ? (string) $attrs['albumId'] : '';
+		if ( '' === $album_id || ! preg_match( self::UUID_PATTERN, $album_id ) ) {
+			return '';
+		}
+
+		// Editor-only cache refresh probe. Requires both edit_posts and a
+		// matching _wpnonce so a clickjack can't be used to force a page-wide
+		// cache miss against a logged-in editor. The action is keyed to the
+		// album id so each album gets its own nonce.
+		if ( ! empty( $_GET['immich_refresh'] )
+			&& current_user_can( 'edit_posts' )
+			&& isset( $_GET['_wpnonce'] )
+			&& wp_verify_nonce(
+				sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ),
+				'immich_refresh_' . $album_id
+			)
+		) {
+			$this->flush_album_cache( $album_id );
+		}
+
+		// WordPress's "load block CSS only when needed" optimisation enqueues
+		// per-block stylesheets only for blocks it detects in the source
+		// post_content. We emit core gallery+image markup at render time, so
+		// core never sees those block delimiters and never auto-enqueues the
+		// styles. Force them on so the gallery actually looks like a gallery
+		// on the frontend.
+		wp_enqueue_style( 'wp-block-gallery' );
+		wp_enqueue_style( 'wp-block-image' );
+		wp_enqueue_style( 'immich-album-block' );
+
+		// Post id is needed both to authorise the album list fetch (per-user
+		// API key falls back to the post author when no site-wide key is set,
+		// matching the asset proxy) and to sign each asset URL further down.
+		// Prefer block context (`usesContext: ["postId"]` in block.json) so
+		// the block resolves correctly when rendered outside The Loop —
+		// sidebar widgets, FSE template parts, query-loop variations — where
+		// get_the_ID() may return 0 or a wholly unrelated post.
+		$post_id = 0;
+		if ( $block instanceof \WP_Block && isset( $block->context['postId'] ) ) {
+			$post_id = (int) $block->context['postId'];
+		}
+		if ( $post_id <= 0 ) {
+			$post_id = (int) get_the_ID();
+		}
+		$author_id = $post_id > 0 ? (int) get_post_field( 'post_author', $post_id ) : 0;
+
+		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
+		$payload = $this->fetch_album_assets( $album_id, $sort, $author_id );
+		if ( is_wp_error( $payload ) ) {
+			return $this->render_album_error_notice( $payload );
+		}
+
+		$assets = $payload['assets'];
+		if ( empty( $assets ) ) {
+			if ( current_user_can( 'edit_posts' ) ) {
+				return '<div class="immich-album-empty" style="border:1px dashed #ccc;padding:8px;color:#757575;">'
+					. esc_html__( 'This Immich album is empty.', 'media-picker-for-immich' )
+					. '</div>';
+			}
+			return '';
+		}
+
+		// Per-block limit (after sort, after cap). 0 = render everything (up to the cap).
+		$limit = max( 0, (int) ( $attrs['limit'] ?? 0 ) );
+		if ( $limit > 0 ) {
+			$assets = array_slice( $assets, 0, $limit );
+		}
+
+		$size          = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
+		$columns       = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
+		$show_captions = ! empty( $attrs['showCaptions'] );
+
+		// Per-figure width inline. Mirrors core's gallery `.columns-N` CSS
+		// rule shape exactly, except core's lives inside `@media (min-width:
+		// 600px)` so it doesn't apply on narrow viewports — emitting inline
+		// makes the column count work everywhere. `width:` is also more
+		// authoritative than `flex-basis` and wins against whatever default
+		// flex behavior the theme might apply to the figures.
+		$gap_px        = 16;
+		$pct           = 100.0 / max( 1, $columns );
+		$frac          = ( max( 1, $columns ) - 1 ) / max( 1, $columns );
+		$figure_style  = sprintf(
+			'width:calc(%.5f%% - var(--wp--style--unstable-gallery-gap,16px) * %.5f);',
+			$pct,
+			$frac
+		);
+
+		$children = '';
+		foreach ( $assets as $a ) {
+			$asset_id = isset( $a['id'] ) ? (string) $a['id'] : '';
+			if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) ) {
+				continue;
+			}
+			$url = $this->album_proxy_url( $asset_id, $size, $post_id );
+			if ( '' === $url ) {
+				continue;
+			}
+			$alt     = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
+			$caption = $show_captions && '' !== $alt
+				? '<figcaption class="wp-element-caption">' . esc_html( $alt ) . '</figcaption>'
+				: '';
+			$children .= '<figure class="wp-block-image size-large" style="' . esc_attr( $figure_style ) . '">'
+				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
+				. $caption
+				. '</figure>';
+		}
+
+		// "View N more on Immich" link when the cap trimmed the gallery and the
+		// user did not explicitly set a `limit`. The link points at the album's
+		// Immich web UI URL — Immich serves both the API and the SPA from the
+		// same origin, so trimming the API path off `get_api_url()` and
+		// appending /albums/<uuid> yields the canonical browser URL.
+		$total_count     = isset( $payload['total_count'] ) ? (int) $payload['total_count'] : count( $assets );
+		$hidden          = max( 0, $total_count - count( $assets ) );
+		$cap_applied     = ( 0 === $limit ) && ( $hidden > 0 );
+		$show_album_link = ! empty( $attrs['showAlbumLink'] );
+
+		// Gate the "View N more on Immich" link on an explicit per-block
+		// opt-in: get_api_url() is the URL the WordPress server uses to talk
+		// to Immich, which on a self-hosted setup is often a Docker-internal
+		// or VPN-only hostname not reachable from a visitor's browser.
+		// Defaulting off keeps galleries from shipping broken links.
+		$more_link = '';
+		if ( $cap_applied && $show_album_link ) {
+			$album_url = rtrim( $this->get_api_url(), '/' ) . '/albums/' . rawurlencode( $album_id );
+			$more_link = '<p class="immich-album-more"><a href="' . esc_url( $album_url ) . '" target="_blank" rel="noopener noreferrer">'
+				. sprintf(
+					/* translators: %d: number of additional assets in the Immich album. */
+					esc_html( _n( 'View %d more on Immich', 'View %d more on Immich', $hidden, 'media-picker-for-immich' ) ),
+					(int) $hidden
+				)
+				. ' &rarr;</a></p>';
+		}
+
+		// "Refresh from Immich" link, visible to logged-in editors on the
+		// published frontend only (suppressed inside the editor's SSR
+		// preview where it would just navigate the iframe). Carries a nonce
+		// keyed to the album id so the cache-flush endpoint is CSRF-safe.
+		$refresh_link  = '';
+		$is_ssr_render = wp_is_rest_endpoint() || is_admin();
+		if ( ! $is_ssr_render && current_user_can( 'edit_posts' ) && $post_id > 0 ) {
+			$permalink = get_permalink( $post_id );
+			if ( false !== $permalink ) {
+				$refresh_url  = add_query_arg(
+					array(
+						'immich_refresh' => 1,
+						'_wpnonce'       => wp_create_nonce( 'immich_refresh_' . $album_id ),
+					),
+					$permalink
+				);
+				$refresh_link = '<p class="immich-album-refresh" style="font-size:12px;color:#757575;margin-top:4px;">'
+					. '<a href="' . esc_url( $refresh_url ) . '">'
+					. esc_html__( 'Refresh this album from Immich', 'media-picker-for-immich' )
+					. '</a></p>';
+			}
+		}
+
+		// Standard WP gallery markup: flex layout via the core `is-layout-flex`
+		// + `wp-block-gallery-is-layout-flex` classes. Set both the CSS
+		// variable and the actual `gap:` property inline so the gap matches
+		// what our per-figure width calc assumes. Without forcing `gap:`,
+		// themes can override it via blockGap (theme.json) and produce an
+		// off-by-one column count: each row overflows by (N-1)*(real_gap-16)
+		// and the last item wraps.
+		$wrapper_style = sprintf(
+			'--wp--style--unstable-gallery-gap:%dpx;gap:%dpx;',
+			$gap_px,
+			$gap_px
+		);
+		$lightbox      = ! empty( $attrs['lightbox'] );
+		// When the lightbox is on, ship the translated close-button label as a
+		// data attribute so the viewScript can apply it without needing a
+		// wp-i18n dependency or a wp_set_script_translations() registration.
+		$lightbox_attr = '';
+		if ( $lightbox ) {
+			$lightbox_attr = ' data-immich-lightbox="1"'
+				. ' data-immich-lightbox-close="' . esc_attr__( 'Close', 'media-picker-for-immich' ) . '"';
+		}
+
+		return '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex immich-album-gallery"'
+			. ' style="' . esc_attr( $wrapper_style ) . '"'
+			. $lightbox_attr
+			. '>'
+			. $children
+			. '</figure>'
+			. $more_link
+			. $refresh_link;
+	}
+
+	/**
+	 * Validate the imageSize block attribute.
+	 *
+	 * @param string $size Raw attribute value.
+	 * @return string One of 'thumbnail', 'preview', 'fullsize'.
+	 */
+	private function validate_image_size( string $size ): string {
+		$allowed = array( 'thumbnail', 'preview', 'fullsize' );
+		return in_array( $size, $allowed, true ) ? $size : 'preview';
+	}
+
+	/**
+	 * Validate the sortOrder block attribute.
+	 *
+	 * @param string $sort Raw attribute value.
+	 * @return string One of 'default', 'oldest', 'newest', 'random'.
+	 */
+	private function validate_sort( string $sort ): string {
+		$allowed = array( 'default', 'oldest', 'newest', 'random' );
+		return in_array( $sort, $allowed, true ) ? $sort : 'default';
+	}
+
+	/**
+	 * Default transient TTL for album asset lists, in seconds.
+	 *
+	 * @return int Filterable via `immich_album_cache_ttl`.
+	 */
+	private function album_cache_ttl(): int {
+		return (int) apply_filters( 'immich_album_cache_ttl', 5 * MINUTE_IN_SECONDS );
+	}
+
+	/**
+	 * Hard cap on rendered assets per block.
+	 *
+	 * @return int Filterable via `immich_album_max_assets`.
+	 */
+	private function album_max_assets(): int {
+		return max( 1, (int) apply_filters( 'immich_album_max_assets', 100 ) );
+	}
+
+	private const ALBUM_SORTS = array( 'default', 'oldest', 'newest', 'random' );
+
+	/**
+	 * Build the cache key for an (album, sort) variant.
+	 *
+	 * Shared across all renders of the album — sidebar widget, post content,
+	 * template part, etc. — because the cached payload only depends on what
+	 * Immich returns for the album, not on which post happens to be wrapping
+	 * the block. Authors with per-user API keys still see their own data
+	 * because the first render after a flush refetches under the post
+	 * author's key; the resulting cache then serves anyone hitting the same
+	 * (album, sort) within the TTL.
+	 */
+	private function album_cache_key( string $album_id, string $sort ): string {
+		return 'immich_album_' . $album_id . '_' . $sort;
+	}
+
+	/**
+	 * Invalidate every sort variant for one album.
+	 *
+	 * Wired up by the editor refresh probe (?immich_refresh=1) and by the
+	 * save_post hook for any post whose content references the album.
+	 */
+	private function flush_album_cache( string $album_id ): void {
+		foreach ( self::ALBUM_SORTS as $sort ) {
+			delete_transient( $this->album_cache_key( $album_id, $sort ) );
+		}
+	}
+
+	/**
+	 * Delete the cached album payloads for any immich/album-gallery blocks
+	 * referenced in the saved post's content. Skips revisions and autosaves;
+	 * bails fast if the marker isn't present so parse_blocks() only runs when
+	 * the post actually contains the block.
+	 *
+	 * Fires for every post type, including reusable blocks (`wp_block`) and
+	 * template parts (`wp_template_part`), so editing a synced pattern or a
+	 * template part that contains the block also invalidates the album.
+	 *
+	 * @param int      $post_id  Post being saved.
+	 * @param \WP_Post $post     The post object.
+	 */
+	public function on_post_save( int $post_id, \WP_Post $post ): void {
+		if ( wp_is_post_revision( $post_id ) || wp_is_post_autosave( $post_id ) ) {
+			return;
+		}
+		if ( '' === $post->post_content || false === strpos( $post->post_content, 'wp:immich/album-gallery' ) ) {
+			return;
+		}
+		$album_ids = array();
+		$this->collect_album_block_ids( parse_blocks( $post->post_content ), $album_ids );
+		foreach ( array_keys( $album_ids ) as $album_id ) {
+			$this->flush_album_cache( $album_id );
+		}
+	}
+
+	private function collect_album_block_ids( array $blocks, array &$album_ids ): void {
+		foreach ( $blocks as $block ) {
+			if ( 'immich/album-gallery' === ( $block['blockName'] ?? '' ) ) {
+				$album_id = isset( $block['attrs']['albumId'] ) ? (string) $block['attrs']['albumId'] : '';
+				if ( '' !== $album_id && preg_match( self::UUID_PATTERN, $album_id ) ) {
+					$album_ids[ $album_id ] = true;
+				}
+			}
+			if ( ! empty( $block['innerBlocks'] ) ) {
+				$this->collect_album_block_ids( $block['innerBlocks'], $album_ids );
+			}
+		}
+	}
+
+	/**
+	 * Fetch and prepare the asset list for an album, with caching and hard cap.
+	 *
+	 * @param string $album_id  Validated UUID.
+	 * @param string $sort      Sort key (default 'default'; expanded in Task 8).
+	 * @param int    $author_id Post author whose per-user API key authorises the
+	 *                          fetch when no site-wide key is configured. Mirrors
+	 *                          handle_proxy_request()'s author lookup so cold-cache
+	 *                          renders work for logged-out visitors.
+	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
+	 */
+	private function fetch_album_assets( string $album_id, string $sort = 'default', int $author_id = 0 ) {
+		$key    = $this->album_cache_key( $album_id, $sort );
+		$cached = get_transient( $key );
+		if ( false !== $cached && is_array( $cached ) ) {
+			return $cached;
+		}
+
+		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ), 'GET', null, $author_id );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( ! isset( $response['assets'] ) || ! is_array( $response['assets'] ) ) {
+			return new \WP_Error(
+				'immich_album_malformed',
+				__( 'Immich returned an unexpected album response.', 'media-picker-for-immich' )
+			);
+		}
+
+		$payload = $this->prepare_album_payload( $response, $sort );
+		set_transient( $key, $payload, $this->album_cache_ttl() );
+		return $payload;
+	}
+
+	/**
+	 * Build the cache payload from a raw Immich /api/albums/{id} response.
+	 *
+	 * Applies sort and the hard cap. Stores only the fields needed for render.
+	 * The `total_count` field is the album's full pre-cap size (used by the
+	 * "View N more on Immich" link added in Task 13).
+	 *
+	 * @param array  $response Raw Immich response (must contain 'assets').
+	 * @param string $sort     One of 'default', 'oldest', 'newest', 'random'.
+	 * @return array{assets: array, total_count: int, fetched_at: int}
+	 */
+	private function prepare_album_payload( array $response, string $sort ): array {
+		$raw   = isset( $response['assets'] ) && is_array( $response['assets'] ) ? $response['assets'] : array();
+		$total = count( $raw );
+
+		$sorted = $this->sort_album_assets( $raw, $sort );
+
+		$cap     = $this->album_max_assets();
+		$trimmed = array_slice( $sorted, 0, $cap );
+
+		// Reduce to the fields render uses.
+		$minimal = array_map(
+			function ( $a ) {
+				return array(
+					'id'               => isset( $a['id'] ) ? (string) $a['id'] : '',
+					'originalFileName' => isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '',
+					'fileCreatedAt'    => isset( $a['fileCreatedAt'] ) ? (string) $a['fileCreatedAt'] : '',
+					'type'             => isset( $a['type'] ) ? (string) $a['type'] : 'IMAGE',
+				);
+			},
+			$trimmed
+		);
+
+		return array(
+			'assets'      => $minimal,
+			'total_count' => $total,
+			'fetched_at'  => time(),
+		);
+	}
+
+	/**
+	 * Sort an album's asset list by the requested order.
+	 *
+	 * @param array  $assets Raw asset array from Immich (each item has at least
+	 *                       `fileCreatedAt` for date-based sorts).
+	 * @param string $sort   One of 'default', 'oldest', 'newest', 'random'.
+	 * @return array Sorted (numerically-keyed) array.
+	 */
+	private function sort_album_assets( array $assets, string $sort ): array {
+		$assets = array_values( $assets );
+		switch ( $sort ) {
+			case 'oldest':
+				usort( $assets, function ( $a, $b ) {
+					return strcmp( (string) ( $a['fileCreatedAt'] ?? '' ), (string) ( $b['fileCreatedAt'] ?? '' ) );
+				} );
+				return $assets;
+			case 'newest':
+				usort( $assets, function ( $a, $b ) {
+					return strcmp( (string) ( $b['fileCreatedAt'] ?? '' ), (string) ( $a['fileCreatedAt'] ?? '' ) );
+				} );
+				return $assets;
+			case 'random':
+				shuffle( $assets );
+				return $assets;
+			case 'default':
+			default:
+				return $assets;
+		}
+	}
 }
 
 add_action( 'plugins_loaded', function () {
-	new Immich_Media_Picker();
+	Immich_Media_Picker::instance();
 } );

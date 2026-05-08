@@ -1,7 +1,7 @@
 === Media Picker for Immich ===
 Contributors: donncha
 Tags: immich, media, photos, self-hosted, gallery
-Requires at least: 6.4
+Requires at least: 6.5
 Tested up to: 6.9
 Requires PHP: 8.0
 Stable tag: 0.1.0
@@ -28,6 +28,8 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
 * **Per-user API keys** — each user can configure their own Immich API key
 * **Local proxy cache** — proxied media is cached on disk after the first request; optional automatic cleanup with configurable lifetime
 
+This plugin also ships an "Immich Album Gallery" block: insert it in any post, pick an Immich album, and the post renders a live gallery of that album using the core Gallery markup (so it inherits your theme's styling and works with the WordPress core lightbox).
+
 == Installation ==
 
 1. Upload the `media-picker-for-immich` folder to `wp-content/plugins/`.
@@ -38,6 +40,7 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
    * `asset.view` — stream thumbnails and video playback through the proxy.
    * `asset.download` — fetch full-resolution originals for the proxy and the Copy/import path.
    * `person.read` — populate the people filter dropdown and people thumbnails.
+   * `album.read` — list albums in the picker and fetch their assets for the Album Gallery block.
 
 == Frequently Asked Questions ==
 
@@ -57,12 +60,13 @@ Your Immich server must be accessible from your WordPress server, but it does no
 
 = Which Immich API key permissions does the plugin need? =
 
-Grant the API key these four permissions — nothing else is required:
+Grant the API key these five permissions — nothing else is required:
 
 * `asset.read` — list asset metadata and run library searches (browse, search by query, search by person).
 * `asset.view` — stream thumbnails and video playback through the proxy.
 * `asset.download` — fetch full-resolution originals for the proxy and the Copy/import path.
 * `person.read` — populate the people filter dropdown and people thumbnails.
+* `album.read` — list albums in the picker and fetch their assets for the Album Gallery block.
 
 The same list is shown inline on the Settings page and the per-user profile API key field for easy copy-paste into Immich.
 
@@ -77,6 +81,20 @@ When a proxied image or video is requested for the first time, the plugin fetche
 = Does the lightbox work automatically? =
 
 Yes. Posts containing proxied Immich images automatically get a lightbox. Clicking an image opens the full-resolution original in an overlay. Press Escape or click anywhere to close.
+
+= How do I embed a whole Immich album in a post? =
+
+Add the "Immich Album Gallery" block from the inserter, click "Pick album", and choose an album from your Immich server. The gallery renders live and is cached for 5 minutes; you can override per-block options like columns, image size, sort, and lightbox in the block sidebar.
+
+For large albums where the global cap (default 100) trims the rendered set, the block has an optional "Show 'View on Immich' link" toggle that appends a link to the album in the Immich web UI. Leave it off unless your Immich URL is reachable from your visitors' browsers — many self-hosted setups put Immich behind a VPN or on a Docker-internal hostname that won't resolve outside the LAN.
+
+= I use Nginx — do I need extra server config? =
+
+Yes. The plugin caches proxied Immich binaries under `wp-content/uploads/immich-cache/`, and the proxy endpoint enforces post-status authorisation on every request. On Apache the plugin drops a deny-all `.htaccess` into that directory automatically so nothing else can serve the cached files. Nginx ignores `.htaccess`, so you need an equivalent rule in your site's server block:
+
+`location ^~ /wp-content/uploads/immich-cache/ { deny all; return 404; }`
+
+Without that, a visitor who captured a cached asset URL from rendered HTML could fetch the file directly even after the post is unpublished or made private.
 
 == Screenshots ==
 

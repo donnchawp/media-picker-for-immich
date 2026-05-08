@@ -49,6 +49,7 @@ When you create the Immich API key, grant only these permissions — nothing els
 | `asset.view` | Stream thumbnails and video playback through the proxy. |
 | `asset.download` | Fetch full-resolution originals for the proxy and the Copy/import path. |
 | `person.read` | Populate the people filter dropdown and people thumbnails. |
+| `album.read` | List albums in the picker and fetch their assets for the Album Gallery block. |
 
 The Settings page and per-user profile field display the same list inline, so you can copy the slugs straight from there into the Immich API key UI.
 
@@ -90,6 +91,27 @@ The bottom of the Immich tab shows assets you've previously added. Click them to
 ### Lightbox
 
 Posts containing Immich images automatically get a lightbox. Clicking an image opens the full-resolution original in an overlay. Press Escape or click anywhere to close.
+
+## Album Gallery block
+
+This plugin ships an "Immich Album Gallery" Gutenberg block (`immich/album-gallery`) that embeds a live Immich album as a gallery. Insert the block, click "Pick album", and choose an album from your Immich server.
+
+Per-block options (sidebar):
+
+- **Columns** (1–8) — grid density.
+- **Image size** — `thumbnail`, `preview` (default), or `fullsize`.
+- **Sort order** — Album order (default), oldest, newest, or random.
+- **Limit** — cap to N images; 0 means all up to the global cap.
+- **Lightbox** — click an image to open the fullsize variant in a centred overlay.
+- **Show captions** — render the asset filename below each image.
+- **Show "View on Immich" link** (default off) — when more assets exist in Immich than are rendered, append a link to the album in the Immich web UI. Defaults off because Immich is often only reachable from your LAN/VPN; turn this on only if your Immich URL is reachable from your visitors' browsers.
+
+The album is fetched live on each page render and cached for 5 minutes. Logged-in editors visiting the published post see a small "Refresh this album from Immich" link below the gallery (the link carries a per-album nonce so the cache-flush endpoint is CSRF-safe). Cached album lists also appear, and can be cleared, on Media → Cache Files.
+
+Filters:
+
+- `immich_album_cache_ttl` (int seconds, default `300`)
+- `immich_album_max_assets` (int, default `100`)
 
 ## Development
 

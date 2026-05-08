@@ -1,0 +1,66 @@
+/**
+ * Frontend styles for the Immich Album Gallery block.
+ *
+ * Layout is handled inline by render_album_block (matches what
+ * core/gallery's PHP render emits: per-figure flex-basis on each child
+ * figure plus the gap CSS variable on the wrapper), so this file is just
+ * for the click-to-expand overlay and the small editor/visitor notices.
+ */
+
+.immich-album-gallery[data-immich-lightbox] > figure.wp-block-image > img {
+	cursor: zoom-in;
+}
+
+.immich-album-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba( 0, 0, 0, 0.85 );
+	z-index: 100000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: zoom-out;
+}
+
+.immich-album-overlay-stage {
+	position: relative;
+	max-width: 95vw;
+	max-height: 95vh;
+}
+
+.immich-album-overlay-img {
+	display: block;
+	max-width: 95vw;
+	max-height: 95vh;
+	width: auto;
+	height: auto;
+	object-fit: contain;
+}
+
+.immich-album-overlay-close {
+	position: absolute;
+	top: -36px;
+	right: 0;
+	background: transparent;
+	border: 0;
+	color: #ffffff;
+	font-size: 32px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 4px 8px;
+}
+
+.immich-album-overlay-close:focus-visible {
+	outline: 2px solid #ffffff;
+}
+
+.immich-album-more {
+	margin-top: 12px;
+	font-size: 14px;
+}
+
+.immich-album-error,
+.immich-album-stale,
+.immich-album-empty {
+	margin: 8px 0;
+}
