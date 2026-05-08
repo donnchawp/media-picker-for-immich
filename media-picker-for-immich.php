@@ -2205,53 +2205,41 @@ class Immich_Media_Picker {
 
 		$size          = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
 		$columns       = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
-		$lightbox      = ! empty( $attrs['lightbox'] );
 		$show_captions = ! empty( $attrs['showCaptions'] );
 
-		// Post id is needed to (a) sign each asset URL so the proxy authorises
-		// the request without an attachment lookup, and (b) determine whose
-		// API key the proxy should use (the post author's, matching the
+		// Post id is needed to sign each asset URL so the proxy authorises
+		// the request without an attachment lookup; the proxy also derives
+		// the post-author from this id for API-key lookup (matching the
 		// existing public-attachment branch).
 		$post_id = (int) get_the_ID();
 
+		// We render `<figure class="wp-block-image">` children directly rather
+		// than going through render_block(['blockName' => 'core/image', ...]):
+		// when core/image's lightbox attribute is set, its render wraps each
+		// figure in a `<div class="wp-lightbox-container">`, which breaks the
+		// gallery's flex column math (it sets widths on `figure.wp-block-image`
+		// but the flex children are now divs flowing at their intrinsic
+		// content width). The current trade-off: we ship a working columns-N
+		// layout; the WP 6.4+ core lightbox is not wired up yet. Tracked as a
+		// follow-up.
 		$children = '';
 		foreach ( $assets as $a ) {
 			$asset_id = isset( $a['id'] ) ? (string) $a['id'] : '';
 			if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) ) {
 				continue;
 			}
-			$url     = $this->album_proxy_url( $asset_id, $size, $post_id );
+			$url = $this->album_proxy_url( $asset_id, $size, $post_id );
 			if ( '' === $url ) {
 				continue;
 			}
-			$alt     = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
-			$caption = $show_captions ? $alt : '';
-
-			$image_attrs = array(
-				'url'      => $url,
-				'alt'      => $alt,
-				'sizeSlug' => 'large',
-			);
-			if ( '' !== $caption ) {
-				$image_attrs['caption'] = $caption;
-			}
-			if ( $lightbox ) {
-				$image_attrs['lightbox'] = array( 'enabled' => true );
-			}
-
-			$inner_html = '<figure class="wp-block-image size-large">'
-				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" />'
-				. ( '' !== $caption ? '<figcaption class="wp-element-caption">' . esc_html( $caption ) . '</figcaption>' : '' )
+			$alt      = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
+			$caption  = $show_captions && '' !== $alt
+				? '<figcaption class="wp-element-caption">' . esc_html( $alt ) . '</figcaption>'
+				: '';
+			$children .= '<figure class="wp-block-image size-large">'
+				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
+				. $caption
 				. '</figure>';
-
-			$children .= render_block(
-				array(
-					'blockName'    => 'core/image',
-					'attrs'        => $image_attrs,
-					'innerHTML'    => $inner_html,
-					'innerContent' => array( $inner_html ),
-				)
-			);
 		}
 
 		$stale_notice = '';
