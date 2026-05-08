@@ -2178,8 +2178,18 @@ class Immich_Media_Picker {
 			return '';
 		}
 
-		// Editor-only cache refresh probe.
-		if ( current_user_can( 'edit_posts' ) && ! empty( $_GET['immich_refresh'] ) ) {
+		// Editor-only cache refresh probe. Requires both edit_posts and a
+		// matching _wpnonce so a clickjack can't be used to force a page-wide
+		// cache miss against a logged-in editor. The action is keyed to the
+		// album id so each album gets its own nonce.
+		if ( ! empty( $_GET['immich_refresh'] )
+			&& current_user_can( 'edit_posts' )
+			&& isset( $_GET['_wpnonce'] )
+			&& wp_verify_nonce(
+				sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ),
+				'immich_refresh_' . $album_id
+			)
+		) {
 			$this->flush_album_cache( $album_id );
 		}
 
@@ -2294,6 +2304,29 @@ class Immich_Media_Picker {
 				. ' &rarr;</a></p>';
 		}
 
+		// "Refresh from Immich" link, visible to logged-in editors on the
+		// published frontend only (suppressed inside the editor's SSR
+		// preview where it would just navigate the iframe). Carries a nonce
+		// keyed to the album id so the cache-flush endpoint is CSRF-safe.
+		$refresh_link  = '';
+		$is_ssr_render = wp_is_rest_endpoint() || is_admin();
+		if ( ! $is_ssr_render && current_user_can( 'edit_posts' ) && $post_id > 0 ) {
+			$permalink = get_permalink( $post_id );
+			if ( false !== $permalink ) {
+				$refresh_url  = add_query_arg(
+					array(
+						'immich_refresh' => 1,
+						'_wpnonce'       => wp_create_nonce( 'immich_refresh_' . $album_id ),
+					),
+					$permalink
+				);
+				$refresh_link = '<p class="immich-album-refresh" style="font-size:12px;color:#757575;margin-top:4px;">'
+					. '<a href="' . esc_url( $refresh_url ) . '">'
+					. esc_html__( 'Refresh this album from Immich', 'media-picker-for-immich' )
+					. '</a></p>';
+			}
+		}
+
 		// Standard WP gallery markup: flex layout via the core `is-layout-flex`
 		// + `wp-block-gallery-is-layout-flex` classes. Set both the CSS
 		// variable and the actual `gap:` property inline so the gap matches
@@ -2316,7 +2349,8 @@ class Immich_Media_Picker {
 			. '>'
 			. $children
 			. '</figure>'
-			. $more_link;
+			. $more_link
+			. $refresh_link;
 	}
 
 	/**

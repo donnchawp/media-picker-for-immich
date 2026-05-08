@@ -106,7 +106,7 @@ Per-block options (sidebar):
 - **Show captions** — render the asset filename below each image.
 - **Show "View on Immich" link** (default off) — when more assets exist in Immich than are rendered, append a link to the album in the Immich web UI. Defaults off because Immich is often only reachable from your LAN/VPN; turn this on only if your Immich URL is reachable from your visitors' browsers.
 
-The album is fetched live on each page render and cached for 5 minutes. Logged-in editors can force a refresh by appending `?immich_refresh=1` to the post URL. Cached album lists appear (and can be cleared) on Media → Cache Files.
+The album is fetched live on each page render and cached for 5 minutes. Logged-in editors visiting the published post see a small "Refresh this album from Immich" link below the gallery (the link carries a per-album nonce so the cache-flush endpoint is CSRF-safe). Cached album lists also appear, and can be cleared, on Media → Cache Files.
 
 Filters:
 
