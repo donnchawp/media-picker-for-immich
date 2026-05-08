@@ -4,7 +4,6 @@
     var useBlockProps     = blockEditor.useBlockProps;
     var Placeholder       = components.Placeholder;
     var Button            = components.Button;
-    var Fragment          = element.Fragment;
     var el                = element.createElement;
     var __                = i18n.__;
 
@@ -15,11 +14,15 @@
             button:   { text: __( 'Insert album', 'media-picker-for-immich' ) },
             multiple: false
         } );
-        frame.on( 'immich:album-selected', function ( album ) {
+        frame.once( 'immich:album-selected', function ( album ) {
             if ( album && album.id ) {
                 onPicked( album );
             }
-            frame.close();
+            // Defer close so we don't tear down the dispatching view mid-event.
+            setTimeout( function () { frame.close(); }, 0 );
+        } );
+        frame.on( 'close', function () {
+            frame.off( 'immich:album-selected' );
         } );
         frame.open();
     }
@@ -40,19 +43,21 @@
                 ? __( 'Change album', 'media-picker-for-immich' )
                 : __( 'Pick album', 'media-picker-for-immich' );
 
-            var body = el(
-                Placeholder,
-                {
-                    icon: 'format-gallery',
-                    label: __( 'Immich Album Gallery', 'media-picker-for-immich' ),
-                    instructions: attrs.albumId
-                        ? __( 'Album:', 'media-picker-for-immich' ) + ' ' + attrs.albumId
-                        : __( 'Pick an album from your Immich server.', 'media-picker-for-immich' )
-                },
-                el( Button, { variant: 'primary', onClick: pick }, label )
+            return el(
+                'div',
+                blockProps,
+                el(
+                    Placeholder,
+                    {
+                        icon: 'format-gallery',
+                        label: __( 'Immich Album Gallery', 'media-picker-for-immich' ),
+                        instructions: attrs.albumId
+                            ? __( 'Album:', 'media-picker-for-immich' ) + ' ' + attrs.albumId
+                            : __( 'Pick an album from your Immich server.', 'media-picker-for-immich' )
+                    },
+                    el( Button, { variant: 'primary', onClick: pick }, label )
+                )
             );
-
-            return el( Fragment, null, el( 'div', blockProps, body ) );
         },
         save: function () { return null; }
     } );
