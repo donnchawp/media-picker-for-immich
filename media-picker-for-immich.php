@@ -2172,6 +2172,15 @@ class Immich_Media_Picker {
 			$this->flush_album_cache( $album_id );
 		}
 
+		// WordPress's "load block CSS only when needed" optimisation enqueues
+		// per-block stylesheets only for blocks it detects in the source
+		// post_content. We emit core gallery+image markup at render time, so
+		// core never sees those block delimiters and never auto-enqueues the
+		// styles. Force them on so the gallery actually looks like a gallery
+		// on the frontend.
+		wp_enqueue_style( 'wp-block-gallery' );
+		wp_enqueue_style( 'wp-block-image' );
+
 		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
 		$payload = $this->fetch_album_assets( $album_id, $sort );
 		if ( is_wp_error( $payload ) ) {
