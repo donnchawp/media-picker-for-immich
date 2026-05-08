@@ -2080,17 +2080,14 @@ class Immich_Media_Picker {
 	 * "View N more on Immich" link added in Task 13).
 	 *
 	 * @param array  $response Raw Immich response (must contain 'assets').
-	 * @param string $sort     Sort key. Currently unused; sort variants land in Task 8.
+	 * @param string $sort     One of 'default', 'oldest', 'newest', 'random'.
 	 * @return array{assets: array, total_count: int, fetched_at: int}
 	 */
 	private function prepare_album_payload( array $response, string $sort ): array {
 		$raw   = isset( $response['assets'] ) && is_array( $response['assets'] ) ? $response['assets'] : array();
 		$total = count( $raw );
 
-		// Sort variants land in Task 8; for now $sort is captured at the cache-key
-		// layer (so different orders produce different transients) but the body
-		// is a no-op pass-through. Task 8 swaps this for the real ordering.
-		$sorted = array_values( $raw );
+		$sorted = $this->sort_album_assets( $raw, $sort );
 
 		$cap     = $this->album_max_assets();
 		$trimmed = array_slice( $sorted, 0, $cap );
@@ -2113,6 +2110,36 @@ class Immich_Media_Picker {
 			'total_count' => $total,
 			'fetched_at'  => time(),
 		);
+	}
+
+	/**
+	 * Sort an album's asset list by the requested order.
+	 *
+	 * @param array  $assets Raw asset array from Immich (each item has at least
+	 *                       `fileCreatedAt` for date-based sorts).
+	 * @param string $sort   One of 'default', 'oldest', 'newest', 'random'.
+	 * @return array Sorted (numerically-keyed) array.
+	 */
+	private function sort_album_assets( array $assets, string $sort ): array {
+		$assets = array_values( $assets );
+		switch ( $sort ) {
+			case 'oldest':
+				usort( $assets, function ( $a, $b ) {
+					return strcmp( (string) ( $a['fileCreatedAt'] ?? '' ), (string) ( $b['fileCreatedAt'] ?? '' ) );
+				} );
+				return $assets;
+			case 'newest':
+				usort( $assets, function ( $a, $b ) {
+					return strcmp( (string) ( $b['fileCreatedAt'] ?? '' ), (string) ( $a['fileCreatedAt'] ?? '' ) );
+				} );
+				return $assets;
+			case 'random':
+				shuffle( $assets );
+				return $assets;
+			case 'default':
+			default:
+				return $assets;
+		}
 	}
 }
 
