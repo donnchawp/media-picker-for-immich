@@ -2060,10 +2060,33 @@ class Immich_Media_Picker {
 				. esc_html__( 'Showing cached version of this Immich album (Immich is unreachable).', 'media-picker-for-immich' )
 				. '</div>';
 		}
+
+		// "View N more on Immich" link when the cap trimmed the gallery and the
+		// user did not explicitly set a `limit`. The link points at the album's
+		// Immich web UI URL — Immich serves both the API and the SPA from the
+		// same origin, so trimming the API path off `get_api_url()` and
+		// appending /albums/<uuid> yields the canonical browser URL.
+		$total_count = isset( $payload['total_count'] ) ? (int) $payload['total_count'] : count( $assets );
+		$hidden      = max( 0, $total_count - count( $assets ) );
+		$cap_applied = ( 0 === $limit ) && ( $hidden > 0 );
+
+		$more_link = '';
+		if ( $cap_applied ) {
+			$album_url = rtrim( $this->get_api_url(), '/' ) . '/albums/' . rawurlencode( $album_id );
+			$more_link = '<p class="immich-album-more"><a href="' . esc_url( $album_url ) . '" target="_blank" rel="noopener noreferrer">'
+				. sprintf(
+					/* translators: %d: number of additional assets in the Immich album. */
+					esc_html( _n( 'View %d more on Immich', 'View %d more on Immich', $hidden, 'media-picker-for-immich' ) ),
+					(int) $hidden
+				)
+				. ' &rarr;</a></p>';
+		}
+
 		return $stale_notice
 			. '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex">'
 			. $children
-			. '</figure>';
+			. '</figure>'
+			. $more_link;
 	}
 
 	/**
