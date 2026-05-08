@@ -442,7 +442,7 @@ class Immich_Media_Picker {
 		}
 
 		$type = sanitize_key( $_GET['immich_media_proxy'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		if ( ! in_array( $type, array( 'thumbnail', 'original', 'video' ), true ) ) {
+		if ( ! in_array( $type, array( 'thumbnail', 'preview', 'original', 'video' ), true ) ) {
 			status_header( 400 );
 			exit( 'Invalid type.' );
 		}
@@ -453,23 +453,36 @@ class Immich_Media_Picker {
 			exit( 'Invalid ID.' );
 		}
 
-		// Only proxy assets that have been explicitly added via the plugin.
-		$attachments = get_posts( array(
-			'post_type'      => 'attachment',
-			'post_status'    => 'inherit',
-			'posts_per_page' => 1,
-			'meta_key'       => '_immich_asset_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
-			'meta_value'     => $id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
-			'fields'         => 'ids',
-		) );
-		if ( empty( $attachments ) ) {
-			status_header( 404 );
-			exit( 'Asset not found.' );
+		// Preview path: an authenticated admin can view assets that haven't
+		// been added yet (used by the picker preview overlay). Reuses the
+		// same cache + Range support as the public path.
+		$preview_nonce = isset( $_GET['preview_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['preview_nonce'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( '' !== $preview_nonce ) {
+			if ( ! wp_verify_nonce( $preview_nonce, 'immich_preview' ) || ! current_user_can( 'upload_files' ) ) {
+				status_header( 403 );
+				exit( 'Forbidden.' );
+			}
+			$author_id = get_current_user_id();
+		} else {
+			// Only proxy assets that have been explicitly added via the plugin.
+			$attachments = get_posts( array(
+				'post_type'      => 'attachment',
+				'post_status'    => 'inherit',
+				'posts_per_page' => 1,
+				'meta_key'       => '_immich_asset_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+				'meta_value'     => $id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
+				'fields'         => 'ids',
+			) );
+			if ( empty( $attachments ) ) {
+				status_header( 404 );
+				exit( 'Asset not found.' );
+			}
+			$author_id = (int) get_post_field( 'post_author', $attachments[0] );
 		}
-		$author_id = (int) get_post_field( 'post_author', $attachments[0] );
 
 		$allowed_types = array(
 			'thumbnail' => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
+			'preview'   => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'original'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif', 'image/tiff', 'video/mp4', 'video/quicktime' ),
 			'video'     => array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' ),
 		);
@@ -514,11 +527,13 @@ class Immich_Media_Picker {
 		$base    = rtrim( $this->get_api_url(), '/' );
 		$api_url = match ( $type ) {
 			'thumbnail' => $base . '/api/assets/' . $id . '/thumbnail',
+			'preview'   => $base . '/api/assets/' . $id . '/thumbnail?size=preview',
 			'video'     => $base . '/api/assets/' . $id . '/video/playback',
 			default     => $base . '/api/assets/' . $id . '/original',
 		};
 		$timeout = match ( $type ) {
 			'thumbnail' => 10,
+			'preview'   => 15,
 			'video'     => 120,
 			default     => 30,
 		};
@@ -931,9 +946,11 @@ class Immich_Media_Picker {
 		wp_set_script_translations( 'media-picker-for-immich', 'media-picker-for-immich' );
 
 		wp_localize_script( 'media-picker-for-immich', 'ImmichMediaPicker', array(
-			'ajaxUrl'  => admin_url( 'admin-ajax.php' ),
-			'nonce'    => wp_create_nonce( 'immich_nonce' ),
-			'splitPct' => $this->get_picker_split_pct( get_current_user_id() ),
+			'ajaxUrl'      => admin_url( 'admin-ajax.php' ),
+			'nonce'        => wp_create_nonce( 'immich_nonce' ),
+			'splitPct'     => $this->get_picker_split_pct( get_current_user_id() ),
+			'previewNonce' => wp_create_nonce( 'immich_preview' ),
+			'proxyUrl'     => home_url( '/' ),
 		) );
 
 		wp_enqueue_style(
@@ -1177,12 +1194,17 @@ class Immich_Media_Picker {
 			if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $asset['id'] ?? '' ) ) {
 				continue;
 			}
-			$result[] = array(
+			$item_type  = 'VIDEO' === ( $asset['type'] ?? '' ) ? 'VIDEO' : 'IMAGE';
+			$item       = array(
 				'id'       => $asset['id'],
-				'type'     => 'VIDEO' === ( $asset['type'] ?? '' ) ? 'VIDEO' : 'IMAGE',
+				'type'     => $item_type,
 				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . rawurlencode( $asset['id'] ) . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
 				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
 			);
+			if ( 'VIDEO' === $item_type && ! empty( $asset['duration'] ) ) {
+				$item['duration'] = (string) $asset['duration'];
+			}
+			$result[] = $item;
 		}
 
 		wp_send_json_success( array( 'items' => $result, 'nextPage' => $next_page ) );
@@ -1236,12 +1258,17 @@ class Immich_Media_Picker {
 			if ( ! preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $asset['id'] ?? '' ) ) {
 				continue;
 			}
-			$result[] = array(
+			$item_type  = 'VIDEO' === ( $asset['type'] ?? '' ) ? 'VIDEO' : 'IMAGE';
+			$item       = array(
 				'id'       => $asset['id'],
-				'type'     => 'VIDEO' === ( $asset['type'] ?? '' ) ? 'VIDEO' : 'IMAGE',
+				'type'     => $item_type,
 				'thumbUrl' => admin_url( 'admin-ajax.php?action=immich_thumbnail&id=' . rawurlencode( $asset['id'] ) . '&nonce=' . wp_create_nonce( 'immich_nonce' ) ),
 				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
 			);
+			if ( 'VIDEO' === $item_type && ! empty( $asset['duration'] ) ) {
+				$item['duration'] = (string) $asset['duration'];
+			}
+			$result[] = $item;
 		}
 
 		wp_send_json_success( array( 'items' => $result, 'nextPage' => $next_page ) );
