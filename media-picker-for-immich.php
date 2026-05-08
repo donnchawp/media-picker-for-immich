@@ -2028,6 +2028,8 @@ class Immich_Media_Picker {
 	/**
 	 * Delete all sort-variant transients for an album.
 	 *
+	 * Wired up by the editor refresh probe in Task 11 (?immich_refresh=1).
+	 *
 	 * @param string $album_id UUID.
 	 */
 	private function flush_album_cache( string $album_id ): void {
@@ -2055,6 +2057,16 @@ class Immich_Media_Picker {
 			return $response;
 		}
 
+		// Guard against malformed responses: a 200 without an 'assets' key
+		// (e.g., wrong content-type, partial JSON) is not a legitimate empty
+		// album. Don't poison the cache for the full TTL.
+		if ( ! isset( $response['assets'] ) || ! is_array( $response['assets'] ) ) {
+			return new \WP_Error(
+				'immich_album_malformed',
+				__( 'Immich returned an unexpected album response.', 'media-picker-for-immich' )
+			);
+		}
+
 		$payload = $this->prepare_album_payload( $response, $sort );
 		set_transient( $key, $payload, $this->album_cache_ttl() );
 		return $payload;
@@ -2064,16 +2076,20 @@ class Immich_Media_Picker {
 	 * Build the cache payload from a raw Immich /api/albums/{id} response.
 	 *
 	 * Applies sort and the hard cap. Stores only the fields needed for render.
+	 * The `total_count` field is the album's full pre-cap size (used by the
+	 * "View N more on Immich" link added in Task 13).
 	 *
 	 * @param array  $response Raw Immich response (must contain 'assets').
-	 * @param string $sort     Sort key.
+	 * @param string $sort     Sort key. Currently unused; sort variants land in Task 8.
 	 * @return array{assets: array, total_count: int, fetched_at: int}
 	 */
 	private function prepare_album_payload( array $response, string $sort ): array {
 		$raw   = isset( $response['assets'] ) && is_array( $response['assets'] ) ? $response['assets'] : array();
 		$total = count( $raw );
 
-		// Sort variants land in Task 8; for now sort='default' is a no-op.
+		// Sort variants land in Task 8; for now $sort is captured at the cache-key
+		// layer (so different orders produce different transients) but the body
+		// is a no-op pass-through. Task 8 swaps this for the real ordering.
 		$sorted = array_values( $raw );
 
 		$cap     = $this->album_max_assets();
