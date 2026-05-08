@@ -97,6 +97,7 @@ class Immich_Media_Picker {
 		add_action( 'init', array( $this, 'handle_proxy_request' ) );
 		add_action( 'init', array( $this, 'maybe_schedule_add_mode_upgrade' ) );
 		add_action( 'init', array( $this, 'register_blocks' ) );
+		add_action( 'save_post', array( $this, 'on_post_save' ), 10, 2 );
 		add_action( 'immich_upgrade_add_mode', array( $this, 'run_add_mode_upgrade' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
@@ -200,16 +201,6 @@ class Immich_Media_Picker {
 			}
 		}
 
-		// Empty all album caches by bumping the global cache-version counter.
-		// Existing transients orphan and expire on their own TTL; new fetches
-		// hash a fresh key. No enumeration needed — works the same on
-		// DB-backed transients and external object caches.
-		if ( isset( $_POST['immich_empty_album_caches'] ) ) {
-			check_admin_referer( 'immich_empty_album_caches' );
-			$this->bump_all_album_cache_versions();
-			$notice = __( 'All album caches invalidated.', 'media-picker-for-immich' );
-		}
-
 		$preview_nonce = wp_create_nonce( 'immich_preview' );
 		$table         = new Immich_Cache_List_Table( $this, 'immich-cache-files', $preview_nonce );
 
@@ -274,16 +265,6 @@ class Immich_Media_Picker {
 				</form>
 			<?php endif; ?>
 
-			<h2><?php esc_html_e( 'Album lists', 'media-picker-for-immich' ); ?></h2>
-			<p class="description">
-				<?php esc_html_e( 'Album block listings cache for 5 minutes per (album, sort, post). Editing the post or saving here invalidates them automatically.', 'media-picker-for-immich' ); ?>
-			</p>
-			<form method="post" style="margin-bottom:8px;">
-				<?php wp_nonce_field( 'immich_empty_album_caches' ); ?>
-				<button type="submit" name="immich_empty_album_caches" value="1" class="button">
-					<?php esc_html_e( 'Empty all album caches', 'media-picker-for-immich' ); ?>
-				</button>
-			</form>
 		</div>
 		<?php
 	}
@@ -2133,7 +2114,7 @@ class Immich_Media_Picker {
 		$author_id = $post_id > 0 ? (int) get_post_field( 'post_author', $post_id ) : 0;
 
 		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
-		$payload = $this->fetch_album_assets( $album_id, $sort, $post_id, $author_id );
+		$payload = $this->fetch_album_assets( $album_id, $sort, $author_id );
 		if ( is_wp_error( $payload ) ) {
 			return $this->render_album_error_notice( $payload );
 		}
@@ -2308,79 +2289,74 @@ class Immich_Media_Picker {
 		return max( 1, (int) apply_filters( 'immich_album_max_assets', 100 ) );
 	}
 
-	/**
-	 * Option name for the per-album / global cache version map.
-	 *
-	 * Stored as an associative array `[ album_id => int, '__global' => int ]`.
-	 * Bumping a value invalidates all transients that hash it into their key.
-	 */
-	private const ALBUM_CACHE_VERSIONS_OPTION = 'immich_album_cache_versions';
+	private const ALBUM_SORTS = array( 'default', 'oldest', 'newest', 'random' );
 
 	/**
-	 * Read the cache-version map. Always returns an array.
+	 * Build the cache key for an (album, sort) variant.
+	 *
+	 * Shared across all renders of the album — sidebar widget, post content,
+	 * template part, etc. — because the cached payload only depends on what
+	 * Immich returns for the album, not on which post happens to be wrapping
+	 * the block. Authors with per-user API keys still see their own data
+	 * because the first render after a flush refetches under the post
+	 * author's key; the resulting cache then serves anyone hitting the same
+	 * (album, sort) within the TTL.
 	 */
-	private function album_cache_versions(): array {
-		$v = get_option( self::ALBUM_CACHE_VERSIONS_OPTION, array() );
-		return is_array( $v ) ? $v : array();
+	private function album_cache_key( string $album_id, string $sort ): string {
+		return 'immich_album_' . $album_id . '_' . $sort;
 	}
 
 	/**
-	 * Bump a single album's version so any cached (album, sort, post) variant
-	 * misses on the next read. Existing transients orphan and expire on TTL.
-	 */
-	private function bump_album_cache_version( string $album_id ): void {
-		$versions               = $this->album_cache_versions();
-		$versions[ $album_id ]  = (int) ( $versions[ $album_id ] ?? 0 ) + 1;
-		update_option( self::ALBUM_CACHE_VERSIONS_OPTION, $versions, false );
-	}
-
-	/**
-	 * Bump the global counter so every album's cache misses on the next read.
-	 * Used by the "Empty all album caches" admin button.
-	 */
-	private function bump_all_album_cache_versions(): void {
-		$versions             = $this->album_cache_versions();
-		$versions['__global'] = (int) ( $versions['__global'] ?? 0 ) + 1;
-		update_option( self::ALBUM_CACHE_VERSIONS_OPTION, $versions, false );
-	}
-
-	/**
-	 * Build the cache key for an (album, sort, post) variant.
+	 * Invalidate every sort variant for one album.
 	 *
-	 * The key folds in:
-	 *  - a per-album version (bumped by the editor "Refresh" link),
-	 *  - a global version (bumped by "Empty all album caches"),
-	 *  - the host post id and its modified-time (so editing the post or
-	 *    moving the block to another post invalidates the cache, and posts
-	 *    by different authors with per-user API keys never share entries).
-	 *
-	 * Hashed so the key stays a fixed short length regardless of inputs and
-	 * so callers don't try to enumerate transients by parsing the key.
-	 */
-	private function album_cache_key( string $album_id, string $sort, int $post_id ): string {
-		$versions       = $this->album_cache_versions();
-		$global_version = (int) ( $versions['__global'] ?? 0 );
-		$album_version  = (int) ( $versions[ $album_id ] ?? 0 );
-		$post_modified  = $post_id > 0 ? (int) get_post_modified_time( 'U', true, $post_id ) : 0;
-
-		return 'immich_album_' . md5( sprintf(
-			'%d|%d|%d|%d|%s|%s',
-			$global_version,
-			$album_version,
-			$post_id,
-			$post_modified,
-			$album_id,
-			$sort
-		) );
-	}
-
-	/**
-	 * Invalidate every cached (sort, post) variant for one album.
-	 *
-	 * Wired up by the editor refresh probe (?immich_refresh=1).
+	 * Wired up by the editor refresh probe (?immich_refresh=1) and by the
+	 * save_post hook for any post whose content references the album.
 	 */
 	private function flush_album_cache( string $album_id ): void {
-		$this->bump_album_cache_version( $album_id );
+		foreach ( self::ALBUM_SORTS as $sort ) {
+			delete_transient( $this->album_cache_key( $album_id, $sort ) );
+		}
+	}
+
+	/**
+	 * Delete the cached album payloads for any immich/album-gallery blocks
+	 * referenced in the saved post's content. Skips revisions and autosaves;
+	 * bails fast if the marker isn't present so parse_blocks() only runs when
+	 * the post actually contains the block.
+	 *
+	 * Fires for every post type, including reusable blocks (`wp_block`) and
+	 * template parts (`wp_template_part`), so editing a synced pattern or a
+	 * template part that contains the block also invalidates the album.
+	 *
+	 * @param int      $post_id  Post being saved.
+	 * @param \WP_Post $post     The post object.
+	 */
+	public function on_post_save( int $post_id, \WP_Post $post ): void {
+		if ( wp_is_post_revision( $post_id ) || wp_is_post_autosave( $post_id ) ) {
+			return;
+		}
+		if ( '' === $post->post_content || false === strpos( $post->post_content, 'wp:immich/album-gallery' ) ) {
+			return;
+		}
+		$album_ids = array();
+		$this->collect_album_block_ids( parse_blocks( $post->post_content ), $album_ids );
+		foreach ( array_keys( $album_ids ) as $album_id ) {
+			$this->flush_album_cache( $album_id );
+		}
+	}
+
+	private function collect_album_block_ids( array $blocks, array &$album_ids ): void {
+		foreach ( $blocks as $block ) {
+			if ( 'immich/album-gallery' === ( $block['blockName'] ?? '' ) ) {
+				$album_id = isset( $block['attrs']['albumId'] ) ? (string) $block['attrs']['albumId'] : '';
+				if ( '' !== $album_id && preg_match( self::UUID_PATTERN, $album_id ) ) {
+					$album_ids[ $album_id ] = true;
+				}
+			}
+			if ( ! empty( $block['innerBlocks'] ) ) {
+				$this->collect_album_block_ids( $block['innerBlocks'], $album_ids );
+			}
+		}
 	}
 
 	/**
@@ -2388,17 +2364,14 @@ class Immich_Media_Picker {
 	 *
 	 * @param string $album_id  Validated UUID.
 	 * @param string $sort      Sort key (default 'default'; expanded in Task 8).
-	 * @param int    $post_id   Host post id; threads into the cache key so
-	 *                          editing the post invalidates the entry and
-	 *                          posts by different authors don't share it.
 	 * @param int    $author_id Post author whose per-user API key authorises the
 	 *                          fetch when no site-wide key is configured. Mirrors
 	 *                          handle_proxy_request()'s author lookup so cold-cache
 	 *                          renders work for logged-out visitors.
 	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
 	 */
-	private function fetch_album_assets( string $album_id, string $sort = 'default', int $post_id = 0, int $author_id = 0 ) {
-		$key    = $this->album_cache_key( $album_id, $sort, $post_id );
+	private function fetch_album_assets( string $album_id, string $sort = 'default', int $author_id = 0 ) {
+		$key    = $this->album_cache_key( $album_id, $sort );
 		$cached = get_transient( $key );
 		if ( false !== $cached && is_array( $cached ) ) {
 			return $cached;
