@@ -21,6 +21,7 @@
     "html":  false,
     "align": ["wide", "full"]
   },
+  "usesContext": ["postId"],
   "editorScript": "file:../../assets/js/immich-album-block.js",
   "viewScript":   "file:../../assets/js/immich-album-block-frontend.js",
   "style":        "file:../../assets/css/immich-album-block.css",

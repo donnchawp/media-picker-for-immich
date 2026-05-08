@@ -23,7 +23,7 @@
 		}
 	}
 
-	function openOverlay( url, alt ) {
+	function openOverlay( url, alt, closeLabel ) {
 		var overlay = document.createElement( 'div' );
 		overlay.className = 'immich-album-overlay';
 		overlay.setAttribute( 'role', 'dialog' );
@@ -41,7 +41,7 @@
 		var close = document.createElement( 'button' );
 		close.type = 'button';
 		close.className = 'immich-album-overlay-close';
-		close.setAttribute( 'aria-label', 'Close' );
+		close.setAttribute( 'aria-label', closeLabel || 'Close' );
 		close.textContent = '×';
 
 		stage.appendChild( img );
@@ -72,6 +72,12 @@
 		var gallery = img.closest( '.immich-album-gallery' );
 		if ( ! gallery || ! gallery.hasAttribute( 'data-immich-lightbox' ) ) { return; }
 		e.preventDefault();
-		openOverlay( getFullsizeUrl( img.currentSrc || img.src ), img.alt );
+		// Close-button label comes from the wrapper's data attribute so the
+		// translation lives in PHP (no wp-i18n dependency in this script).
+		openOverlay(
+			getFullsizeUrl( img.currentSrc || img.src ),
+			img.alt,
+			gallery.getAttribute( 'data-immich-lightbox-close' )
+		);
 	} );
 }() );

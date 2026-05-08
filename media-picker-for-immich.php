@@ -841,7 +841,7 @@ class Immich_Media_Picker {
 		);
 	}
 
-	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'original', 'video' );
+	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video' );
 
 	private const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
 
@@ -2076,7 +2076,7 @@ class Immich_Media_Picker {
 	 * @return string Rendered HTML; empty for visitors when the album is
 	 *                missing/unloadable; an inline error notice for editors.
 	 */
-	public function render_album_block( array $attrs ): string {
+	public function render_album_block( array $attrs, ?\WP_Block $block = null ): string {
 		$album_id = isset( $attrs['albumId'] ) ? (string) $attrs['albumId'] : '';
 		if ( '' === $album_id || ! preg_match( self::UUID_PATTERN, $album_id ) ) {
 			return '';
@@ -2110,7 +2110,17 @@ class Immich_Media_Picker {
 		// Post id is needed both to authorise the album list fetch (per-user
 		// API key falls back to the post author when no site-wide key is set,
 		// matching the asset proxy) and to sign each asset URL further down.
-		$post_id   = (int) get_the_ID();
+		// Prefer block context (`usesContext: ["postId"]` in block.json) so
+		// the block resolves correctly when rendered outside The Loop —
+		// sidebar widgets, FSE template parts, query-loop variations — where
+		// get_the_ID() may return 0 or a wholly unrelated post.
+		$post_id = 0;
+		if ( $block instanceof \WP_Block && isset( $block->context['postId'] ) ) {
+			$post_id = (int) $block->context['postId'];
+		}
+		if ( $post_id <= 0 ) {
+			$post_id = (int) get_the_ID();
+		}
 		$author_id = $post_id > 0 ? (int) get_post_field( 'post_author', $post_id ) : 0;
 
 		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
@@ -2237,7 +2247,14 @@ class Immich_Media_Picker {
 			$gap_px
 		);
 		$lightbox      = ! empty( $attrs['lightbox'] );
-		$lightbox_attr = $lightbox ? ' data-immich-lightbox="1"' : '';
+		// When the lightbox is on, ship the translated close-button label as a
+		// data attribute so the viewScript can apply it without needing a
+		// wp-i18n dependency or a wp_set_script_translations() registration.
+		$lightbox_attr = '';
+		if ( $lightbox ) {
+			$lightbox_attr = ' data-immich-lightbox="1"'
+				. ' data-immich-lightbox-close="' . esc_attr__( 'Close', 'media-picker-for-immich' ) . '"';
+		}
 
 		return '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex immich-album-gallery"'
 			. ' style="' . esc_attr( $wrapper_style ) . '"'
