@@ -725,61 +725,93 @@ class Immich_Media_Picker {
 			) );
 		}
 
-		// Phase 1: authenticate.
-		$me = $this->probe_immich( $base_url, $api_key, '/api/users/me' );
-		if ( ! $me['ok'] ) {
-			$message = match ( $me['status'] ) {
-				'unauthorized' => __( 'API key rejected by Immich.', 'media-picker-for-immich' ),
-				'timeout'      => __( 'The Immich server did not respond in time.', 'media-picker-for-immich' ),
-				'unreachable'  => __( 'Could not reach the Immich server. Check the API URL.', 'media-picker-for-immich' ),
-				default        => sprintf( /* translators: %d: HTTP status code */ __( 'Unexpected response from Immich (HTTP %d).', 'media-picker-for-immich' ), $me['code'] ),
-			};
-			wp_send_json_success( array(
-				'ok'      => false,
-				'status'  => $me['status'],
-				'message' => $message,
-			) );
-		}
-
-		$user_label = is_array( $me['body'] ) ? ( $me['body']['email'] ?? $me['body']['name'] ?? '' ) : '';
-
-		// Phase 2: scope probes.
+		// Run scope probes; the aggregate doubles as the connection test.
+		// /users/me is unsuitable here because it requires user.read, which is
+		// outside the scope set the plugin actually needs.
+		$probes = array();
 		$scopes = array();
 
-		$asset_read_probe         = $this->probe_immich( $base_url, $api_key, '/api/search/metadata', 'POST', array( 'size' => 1, 'page' => 1 ) );
-		$scopes['asset.read']     = $this->scope_status( $asset_read_probe );
-
-		$person_read_probe        = $this->probe_immich( $base_url, $api_key, '/api/people?size=1' );
-		$scopes['person.read']    = $this->scope_status( $person_read_probe );
+		$probes['asset.read']  = $this->probe_immich( $base_url, $api_key, '/api/search/metadata', 'POST', array( 'size' => 1, 'page' => 1 ) );
+		$probes['person.read'] = $this->probe_immich( $base_url, $api_key, '/api/people?size=1' );
 
 		$asset_id = '';
-		if ( $asset_read_probe['ok'] && is_array( $asset_read_probe['body'] ) ) {
-			$asset_id = $asset_read_probe['body']['assets']['items'][0]['id'] ?? '';
+		if ( $probes['asset.read']['ok'] && is_array( $probes['asset.read']['body'] ) ) {
+			$asset_id = $probes['asset.read']['body']['assets']['items'][0]['id'] ?? '';
 		}
 
 		if ( '' !== $asset_id ) {
-			$thumb_probe              = $this->probe_immich( $base_url, $api_key, '/api/assets/' . rawurlencode( $asset_id ) . '/thumbnail' );
-			$scopes['asset.view']     = $this->scope_status( $thumb_probe );
-			$orig_probe               = $this->probe_immich( $base_url, $api_key, '/api/assets/' . rawurlencode( $asset_id ) . '/original', 'GET', null, array( 'Range' => 'bytes=0-0' ) );
-			// 206 (Partial Content) also means access succeeded.
-			if ( ! $orig_probe['ok'] && 206 === $orig_probe['code'] ) {
-				$orig_probe['ok']     = true;
-				$orig_probe['status'] = 'ok';
+			$probes['asset.view']     = $this->probe_immich( $base_url, $api_key, '/api/assets/' . rawurlencode( $asset_id ) . '/thumbnail' );
+			$probes['asset.download'] = $this->probe_immich( $base_url, $api_key, '/api/assets/' . rawurlencode( $asset_id ) . '/original', 'GET', null, array( 'Range' => 'bytes=0-0' ) );
+			// 206 (Partial Content) also counts as success for the Range probe.
+			if ( ! $probes['asset.download']['ok'] && 206 === $probes['asset.download']['code'] ) {
+				$probes['asset.download']['ok']     = true;
+				$probes['asset.download']['status'] = 'ok';
 			}
-			$scopes['asset.download'] = $this->scope_status( $orig_probe );
+		}
+
+		foreach ( array( 'asset.read', 'asset.view', 'asset.download', 'person.read' ) as $slug ) {
+			if ( ! isset( $probes[ $slug ] ) ) {
+				$scopes[ $slug ] = 'unverified';
+			} else {
+				$scopes[ $slug ] = $this->scope_status( $probes[ $slug ] );
+			}
+		}
+
+		// Aggregate connection status from the probes.
+		$any_ok            = false;
+		$any_unreachable   = false;
+		$any_timeout       = false;
+		$any_unauthorized  = false;
+		$last_http_code    = 0;
+		foreach ( $probes as $probe ) {
+			if ( $probe['ok'] ) {
+				$any_ok = true;
+			} else {
+				switch ( $probe['status'] ) {
+					case 'timeout':
+						$any_timeout = true;
+						break;
+					case 'unreachable':
+						$any_unreachable = true;
+						break;
+					case 'unauthorized':
+						$any_unauthorized = true;
+						break;
+					default:
+						$last_http_code = $probe['code'] ?: $last_http_code;
+				}
+			}
+		}
+
+		if ( $any_ok ) {
+			wp_send_json_success( array(
+				'ok'      => true,
+				'status'  => 'connected',
+				'scopes'  => $scopes,
+				'message' => __( 'Connected.', 'media-picker-for-immich' ),
+			) );
+		}
+
+		if ( $any_unreachable ) {
+			$status  = 'unreachable';
+			$message = __( 'Could not reach the Immich server. Check the API URL.', 'media-picker-for-immich' );
+		} elseif ( $any_timeout ) {
+			$status  = 'timeout';
+			$message = __( 'The Immich server did not respond in time.', 'media-picker-for-immich' );
+		} elseif ( $any_unauthorized ) {
+			$status  = 'unauthorized';
+			$message = __( 'API key rejected for every required permission. Generate a new key with the listed scopes.', 'media-picker-for-immich' );
 		} else {
-			$scopes['asset.view']     = 'unverified';
-			$scopes['asset.download'] = 'unverified';
+			$status  = 'http_error';
+			/* translators: %d: HTTP status code */
+			$message = sprintf( __( 'Unexpected response from Immich (HTTP %d).', 'media-picker-for-immich' ), $last_http_code );
 		}
 
 		wp_send_json_success( array(
-			'ok'      => true,
-			'status'  => 'connected',
-			'user'    => $user_label,
+			'ok'      => false,
+			'status'  => $status,
 			'scopes'  => $scopes,
-			'message' => '' !== $user_label
-				? sprintf( /* translators: %s: Immich user identifier */ __( 'Connected as %s.', 'media-picker-for-immich' ), $user_label )
-				: __( 'Connected.', 'media-picker-for-immich' ),
+			'message' => $message,
 		) );
 	}
 
