@@ -1844,7 +1844,12 @@ class Immich_Media_Picker {
 	 * Register Gutenberg blocks shipped by this plugin.
 	 */
 	public function register_blocks(): void {
-		register_block_type( __DIR__ . '/includes/block-album-gallery' );
+		$registered = register_block_type( __DIR__ . '/includes/block-album-gallery' );
+		if ( $registered && ! empty( $registered->editor_script_handles ) ) {
+			foreach ( $registered->editor_script_handles as $handle ) {
+				wp_set_script_translations( $handle, 'media-picker-for-immich' );
+			}
+		}
 	}
 
 	/**
