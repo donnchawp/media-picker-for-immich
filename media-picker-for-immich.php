@@ -56,6 +56,7 @@ class Immich_Media_Picker {
 			'asset.view'     => __( 'Stream thumbnails and video playback through the proxy.', 'media-picker-for-immich' ),
 			'asset.download' => __( 'Fetch full-resolution originals for the proxy and the Copy/import path.', 'media-picker-for-immich' ),
 			'person.read'    => __( 'Populate the people filter dropdown and people thumbnails.', 'media-picker-for-immich' ),
+			'album.read'     => __( 'List albums in the picker and fetch their assets for the Album Gallery block.', 'media-picker-for-immich' ),
 		);
 	}
 
@@ -722,6 +723,7 @@ class Immich_Media_Picker {
 		$allowed_types = array(
 			'thumbnail' => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'preview'   => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
+			'fullsize'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'original'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif', 'image/tiff', 'video/mp4', 'video/quicktime' ),
 			'video'     => array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' ),
 		);
@@ -1220,6 +1222,7 @@ class Immich_Media_Picker {
 
 		$probes['asset.read']  = $this->probe_immich( $base_url, $api_key, '/api/search/metadata', 'POST', array( 'size' => 1, 'page' => 1 ) );
 		$probes['person.read'] = $this->probe_immich( $base_url, $api_key, '/api/people?size=1' );
+		$probes['album.read']  = $this->probe_immich( $base_url, $api_key, '/api/albums' );
 
 		$asset_id = '';
 		if ( $probes['asset.read']['ok'] && is_array( $probes['asset.read']['body'] ) ) {
@@ -1236,7 +1239,7 @@ class Immich_Media_Picker {
 			}
 		}
 
-		foreach ( array( 'asset.read', 'asset.view', 'asset.download', 'person.read' ) as $slug ) {
+		foreach ( array( 'asset.read', 'asset.view', 'asset.download', 'person.read', 'album.read' ) as $slug ) {
 			if ( ! isset( $probes[ $slug ] ) ) {
 				$scopes[ $slug ] = 'unverified';
 			} else {

@@ -40,6 +40,7 @@ This plugin also ships an "Immich Album Gallery" block: insert it in any post, p
    * `asset.view` — stream thumbnails and video playback through the proxy.
    * `asset.download` — fetch full-resolution originals for the proxy and the Copy/import path.
    * `person.read` — populate the people filter dropdown and people thumbnails.
+   * `album.read` — list albums in the picker and fetch their assets for the Album Gallery block.
 
 == Frequently Asked Questions ==
 
@@ -59,12 +60,13 @@ Your Immich server must be accessible from your WordPress server, but it does no
 
 = Which Immich API key permissions does the plugin need? =
 
-Grant the API key these four permissions — nothing else is required:
+Grant the API key these five permissions — nothing else is required:
 
 * `asset.read` — list asset metadata and run library searches (browse, search by query, search by person).
 * `asset.view` — stream thumbnails and video playback through the proxy.
 * `asset.download` — fetch full-resolution originals for the proxy and the Copy/import path.
 * `person.read` — populate the people filter dropdown and people thumbnails.
+* `album.read` — list albums in the picker and fetch their assets for the Album Gallery block.
 
 The same list is shown inline on the Settings page and the per-user profile API key field for easy copy-paste into Immich.
 
