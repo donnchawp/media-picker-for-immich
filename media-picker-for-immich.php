@@ -668,6 +668,40 @@ class Immich_Media_Picker {
 	}
 
 	/**
+	 * Build a signed proxy URL for an asset embedded in an album-gallery block.
+	 *
+	 * Lets anonymous frontend visitors fetch images that are not WP attachments.
+	 * Authorisation is via HMAC over (asset_id, post_id) with wp_salt('nonce').
+	 * Stable across page loads (no nonce-tick expiry) so cached frontend HTML
+	 * keeps working for the post's lifetime, and resilient against tampering:
+	 * a request can only succeed if the token matches the (asset, post) pair.
+	 *
+	 * @param string $asset_id Asset UUID.
+	 * @param string $size     'thumbnail', 'preview', 'fullsize', 'original', or 'video'.
+	 * @param int    $post_id  Post containing the album block. Used by the
+	 *                         proxy to derive the post-author for API-key
+	 *                         lookup (matching the existing public branch).
+	 * @return string URL, or '' if any input is invalid.
+	 */
+	private function album_proxy_url( string $asset_id, string $size, int $post_id ): string {
+		if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) || $post_id <= 0 ) {
+			return '';
+		}
+		$allowed = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video' );
+		if ( ! in_array( $size, $allowed, true ) ) {
+			$size = 'preview';
+		}
+		$token = hash_hmac( 'sha256', $asset_id . '|' . $post_id, wp_salt( 'nonce' ) );
+		$args  = array(
+			'immich_media_proxy' => $size,
+			'id'                 => $asset_id,
+			'album_post'         => $post_id,
+			'album_token'        => $token,
+		);
+		return add_query_arg( $args, home_url( '/' ) );
+	}
+
+	/**
 	 * Public proxy endpoint — intentionally unauthenticated so proxied images
 	 * work in published posts for anonymous visitors. Only assets that have a
 	 * corresponding WordPress attachment (created via "Use" or "Copy") are
@@ -697,12 +731,30 @@ class Immich_Media_Picker {
 		// been added yet (used by the picker preview overlay). Reuses the
 		// same cache + Range support as the public path.
 		$preview_nonce = isset( $_GET['preview_nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['preview_nonce'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$album_token   = isset( $_GET['album_token'] ) ? sanitize_text_field( wp_unslash( $_GET['album_token'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$album_post    = isset( $_GET['album_post'] ) ? absint( $_GET['album_post'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
 		if ( '' !== $preview_nonce ) {
 			if ( ! wp_verify_nonce( $preview_nonce, 'immich_preview' ) || ! current_user_can( 'upload_files' ) ) {
 				status_header( 403 );
 				exit( 'Forbidden.' );
 			}
 			$author_id = get_current_user_id();
+		} elseif ( '' !== $album_token && $album_post > 0 ) {
+			// Album-block path: signed proxy URL emitted by render_album_block.
+			// HMAC over (asset_id, post_id) with wp_salt('nonce'). Stable across
+			// page loads (no nonce-tick expiry) so cached frontend HTML stays
+			// valid for the lifetime of the post.
+			$expected = hash_hmac( 'sha256', $id . '|' . $album_post, wp_salt( 'nonce' ) );
+			if ( ! hash_equals( $expected, $album_token ) ) {
+				status_header( 403 );
+				exit( 'Invalid album token.' );
+			}
+			$author_id = (int) get_post_field( 'post_author', $album_post );
+			if ( 0 === $author_id ) {
+				status_header( 404 );
+				exit( 'Post not found.' );
+			}
 		} else {
 			// Only proxy assets that have been explicitly added via the plugin.
 			$attachments = get_posts( array(
@@ -2147,13 +2199,22 @@ class Immich_Media_Picker {
 		$lightbox      = ! empty( $attrs['lightbox'] );
 		$show_captions = ! empty( $attrs['showCaptions'] );
 
+		// Post id is needed to (a) sign each asset URL so the proxy authorises
+		// the request without an attachment lookup, and (b) determine whose
+		// API key the proxy should use (the post author's, matching the
+		// existing public-attachment branch).
+		$post_id = (int) get_the_ID();
+
 		$children = '';
 		foreach ( $assets as $a ) {
 			$asset_id = isset( $a['id'] ) ? (string) $a['id'] : '';
 			if ( '' === $asset_id || ! preg_match( self::UUID_PATTERN, $asset_id ) ) {
 				continue;
 			}
-			$url     = home_url( '/?immich_media_proxy=' . rawurlencode( $size ) . '&id=' . rawurlencode( $asset_id ) );
+			$url     = $this->album_proxy_url( $asset_id, $size, $post_id );
+			if ( '' === $url ) {
+				continue;
+			}
 			$alt     = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
 			$caption = $show_captions ? $alt : '';
 
