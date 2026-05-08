@@ -200,27 +200,14 @@ class Immich_Media_Picker {
 			}
 		}
 
-		// Empty all album caches.
+		// Empty all album caches by bumping the global cache-version counter.
+		// Existing transients orphan and expire on their own TTL; new fetches
+		// hash a fresh key. No enumeration needed — works the same on
+		// DB-backed transients and external object caches.
 		if ( isset( $_POST['immich_empty_album_caches'] ) ) {
 			check_admin_referer( 'immich_empty_album_caches' );
-			$deleted = 0;
-			foreach ( $this->enumerate_album_caches() as $row ) {
-				if ( delete_transient( $row['key'] ) ) {
-					$deleted++;
-				}
-			}
-			/* translators: %d: number of cached album entries removed. */
-			$notice = sprintf( __( 'Emptied %d cached album entries.', 'media-picker-for-immich' ), $deleted );
-		}
-
-		// Delete a single album cache transient.
-		if ( isset( $_GET['immich_act'] ) && 'delete_album' === sanitize_key( $_GET['immich_act'] ) && isset( $_GET['album_key'] ) ) {
-			$key = sanitize_text_field( wp_unslash( $_GET['album_key'] ) );
-			check_admin_referer( 'immich_delete_album_' . $key );
-			if ( preg_match( '/^immich_album_[0-9a-f-]{36}_(default|oldest|newest|random)$/i', $key ) ) {
-				delete_transient( $key );
-				$notice = __( 'Album cache deleted.', 'media-picker-for-immich' );
-			}
+			$this->bump_all_album_cache_versions();
+			$notice = __( 'All album caches invalidated.', 'media-picker-for-immich' );
 		}
 
 		$preview_nonce = wp_create_nonce( 'immich_preview' );
@@ -287,69 +274,16 @@ class Immich_Media_Picker {
 				</form>
 			<?php endif; ?>
 
-		<?php
-		$album_caches = $this->enumerate_album_caches();
-		?>
-
-		<h2><?php esc_html_e( 'Album lists', 'media-picker-for-immich' ); ?></h2>
-		<?php if ( empty( $album_caches ) ) : ?>
-			<p><?php esc_html_e( 'No cached album lists.', 'media-picker-for-immich' ); ?></p>
-		<?php else : ?>
+			<h2><?php esc_html_e( 'Album lists', 'media-picker-for-immich' ); ?></h2>
+			<p class="description">
+				<?php esc_html_e( 'Album block listings cache for 5 minutes per (album, sort, post). Editing the post or saving here invalidates them automatically.', 'media-picker-for-immich' ); ?>
+			</p>
 			<form method="post" style="margin-bottom:8px;">
 				<?php wp_nonce_field( 'immich_empty_album_caches' ); ?>
 				<button type="submit" name="immich_empty_album_caches" value="1" class="button">
 					<?php esc_html_e( 'Empty all album caches', 'media-picker-for-immich' ); ?>
 				</button>
 			</form>
-			<table class="wp-list-table widefat striped">
-				<thead>
-					<tr>
-						<th><?php esc_html_e( 'Album UUID', 'media-picker-for-immich' ); ?></th>
-						<th><?php esc_html_e( 'Sort', 'media-picker-for-immich' ); ?></th>
-						<th><?php esc_html_e( 'Assets', 'media-picker-for-immich' ); ?></th>
-						<th><?php esc_html_e( 'Cached', 'media-picker-for-immich' ); ?></th>
-						<th><?php esc_html_e( 'Size', 'media-picker-for-immich' ); ?></th>
-						<th><?php esc_html_e( 'Actions', 'media-picker-for-immich' ); ?></th>
-					</tr>
-				</thead>
-				<tbody>
-					<?php foreach ( $album_caches as $row ) :
-						$delete_url = wp_nonce_url(
-							add_query_arg(
-								array(
-									'page'       => 'immich-cache-files',
-									'immich_act' => 'delete_album',
-									'album_key'  => rawurlencode( $row['key'] ),
-								),
-								admin_url( 'upload.php' )
-							),
-							'immich_delete_album_' . $row['key']
-						);
-						?>
-						<tr>
-							<td><code><?php echo esc_html( $row['uuid'] ); ?></code></td>
-							<td><?php echo esc_html( $row['sort'] ); ?></td>
-							<td><?php echo (int) $row['total_count']; ?></td>
-							<td>
-								<?php
-								if ( $row['fetched_at'] > 0 ) {
-									printf(
-										/* translators: %s: human-readable time difference. */
-										esc_html__( '%s ago', 'media-picker-for-immich' ),
-										esc_html( human_time_diff( $row['fetched_at'] ) )
-									);
-								} else {
-									esc_html_e( 'unknown', 'media-picker-for-immich' );
-								}
-								?>
-							</td>
-							<td><?php echo esc_html( size_format( $row['size'] ) ?: '0 B' ); ?></td>
-							<td><a href="<?php echo esc_url( $delete_url ); ?>"><?php esc_html_e( 'Delete', 'media-picker-for-immich' ); ?></a></td>
-						</tr>
-					<?php endforeach; ?>
-				</tbody>
-			</table>
-		<?php endif; ?>
 		</div>
 		<?php
 	}
@@ -973,46 +907,6 @@ class Immich_Media_Picker {
 			closedir( $handle );
 		}
 
-		return $items;
-	}
-
-	/**
-	 * Enumerate active album-list transients.
-	 *
-	 * Returns one entry per (uuid, sort) variant. Reads from wp_options directly
-	 * so we can include transients with no expiry-timeout sibling (truly stale
-	 * entries left from prior runs).
-	 *
-	 * @return array<int,array{key:string,uuid:string,sort:string,total_count:int,fetched_at:int,size:int}>
-	 */
-	public function enumerate_album_caches(): array {
-		global $wpdb;
-		$rows  = $wpdb->get_results(
-			"SELECT option_name, option_value FROM {$wpdb->options}
-			 WHERE option_name LIKE '_transient_immich_album_%'
-			 AND option_name NOT LIKE '_transient_timeout_%'"
-		);
-		$items = array();
-		foreach ( $rows as $row ) {
-			$name = (string) $row->option_name;
-			// _transient_immich_album_<uuid>_<sort>
-			if ( ! preg_match( '/^_transient_immich_album_([0-9a-f-]{36})_(default|oldest|newest|random)$/i', $name, $m ) ) {
-				continue;
-			}
-			$payload = maybe_unserialize( $row->option_value );
-			if ( ! is_array( $payload ) ) {
-				continue;
-			}
-			$items[] = array(
-				'key'         => substr( $name, strlen( '_transient_' ) ),
-				'uuid'        => $m[1],
-				'sort'        => $m[2],
-				'total_count' => isset( $payload['total_count'] ) ? (int) $payload['total_count'] : 0,
-				'fetched_at'  => isset( $payload['fetched_at'] ) ? (int) $payload['fetched_at'] : 0,
-				'size'        => strlen( (string) $row->option_value ),
-			);
-		}
-		usort( $items, function ( $a, $b ) { return $b['fetched_at'] <=> $a['fetched_at']; } );
 		return $items;
 	}
 
@@ -2239,7 +2133,7 @@ class Immich_Media_Picker {
 		$author_id = $post_id > 0 ? (int) get_post_field( 'post_author', $post_id ) : 0;
 
 		$sort    = $this->validate_sort( isset( $attrs['sortOrder'] ) ? (string) $attrs['sortOrder'] : 'default' );
-		$payload = $this->fetch_album_assets( $album_id, $sort, $author_id );
+		$payload = $this->fetch_album_assets( $album_id, $sort, $post_id, $author_id );
 		if ( is_wp_error( $payload ) ) {
 			return $this->render_album_error_notice( $payload );
 		}
@@ -2297,13 +2191,6 @@ class Immich_Media_Picker {
 				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
 				. $caption
 				. '</figure>';
-		}
-
-		$stale_notice = '';
-		if ( ! empty( $payload['stale'] ) && current_user_can( 'edit_posts' ) ) {
-			$stale_notice = '<div class="immich-album-stale" style="background:#fcf9e8;border:1px solid #dba617;padding:6px;margin-bottom:8px;">'
-				. esc_html__( 'Showing cached version of this Immich album (Immich is unreachable).', 'media-picker-for-immich' )
-				. '</div>';
 		}
 
 		// "View N more on Immich" link when the cap trimmed the gallery and the
@@ -2371,8 +2258,7 @@ class Immich_Media_Picker {
 		$lightbox      = ! empty( $attrs['lightbox'] );
 		$lightbox_attr = $lightbox ? ' data-immich-lightbox="1"' : '';
 
-		return $stale_notice
-			. '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex immich-album-gallery"'
+		return '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex immich-album-gallery"'
 			. ' style="' . esc_attr( $wrapper_style ) . '"'
 			. $lightbox_attr
 			. '>'
@@ -2423,38 +2309,78 @@ class Immich_Media_Picker {
 	}
 
 	/**
-	 * Build the cache key for an album+sort variant.
+	 * Option name for the per-album / global cache version map.
+	 *
+	 * Stored as an associative array `[ album_id => int, '__global' => int ]`.
+	 * Bumping a value invalidates all transients that hash it into their key.
 	 */
-	private function album_cache_key( string $album_id, string $sort ): string {
-		return 'immich_album_' . $album_id . '_' . $sort;
+	private const ALBUM_CACHE_VERSIONS_OPTION = 'immich_album_cache_versions';
+
+	/**
+	 * Read the cache-version map. Always returns an array.
+	 */
+	private function album_cache_versions(): array {
+		$v = get_option( self::ALBUM_CACHE_VERSIONS_OPTION, array() );
+		return is_array( $v ) ? $v : array();
 	}
 
 	/**
-	 * Read a transient ignoring its expiry.
-	 *
-	 * Used as a degraded fallback when Immich is unreachable. Works only
-	 * with the default DB-backed transient store; with an external object
-	 * cache the underlying option does not exist and this returns false.
-	 *
-	 * @param string $key Transient key (without the `_transient_` prefix).
-	 * @return mixed Stored value, or false if not present.
+	 * Bump a single album's version so any cached (album, sort, post) variant
+	 * misses on the next read. Existing transients orphan and expire on TTL.
 	 */
-	private function read_stale_transient( string $key ) {
-		$value = get_option( '_transient_' . $key, false );
-		return false === $value ? false : $value;
+	private function bump_album_cache_version( string $album_id ): void {
+		$versions               = $this->album_cache_versions();
+		$versions[ $album_id ]  = (int) ( $versions[ $album_id ] ?? 0 ) + 1;
+		update_option( self::ALBUM_CACHE_VERSIONS_OPTION, $versions, false );
 	}
 
 	/**
-	 * Delete all sort-variant transients for an album.
+	 * Bump the global counter so every album's cache misses on the next read.
+	 * Used by the "Empty all album caches" admin button.
+	 */
+	private function bump_all_album_cache_versions(): void {
+		$versions             = $this->album_cache_versions();
+		$versions['__global'] = (int) ( $versions['__global'] ?? 0 ) + 1;
+		update_option( self::ALBUM_CACHE_VERSIONS_OPTION, $versions, false );
+	}
+
+	/**
+	 * Build the cache key for an (album, sort, post) variant.
 	 *
-	 * Wired up by the editor refresh probe in Task 11 (?immich_refresh=1).
+	 * The key folds in:
+	 *  - a per-album version (bumped by the editor "Refresh" link),
+	 *  - a global version (bumped by "Empty all album caches"),
+	 *  - the host post id and its modified-time (so editing the post or
+	 *    moving the block to another post invalidates the cache, and posts
+	 *    by different authors with per-user API keys never share entries).
 	 *
-	 * @param string $album_id UUID.
+	 * Hashed so the key stays a fixed short length regardless of inputs and
+	 * so callers don't try to enumerate transients by parsing the key.
+	 */
+	private function album_cache_key( string $album_id, string $sort, int $post_id ): string {
+		$versions       = $this->album_cache_versions();
+		$global_version = (int) ( $versions['__global'] ?? 0 );
+		$album_version  = (int) ( $versions[ $album_id ] ?? 0 );
+		$post_modified  = $post_id > 0 ? (int) get_post_modified_time( 'U', true, $post_id ) : 0;
+
+		return 'immich_album_' . md5( sprintf(
+			'%d|%d|%d|%d|%s|%s',
+			$global_version,
+			$album_version,
+			$post_id,
+			$post_modified,
+			$album_id,
+			$sort
+		) );
+	}
+
+	/**
+	 * Invalidate every cached (sort, post) variant for one album.
+	 *
+	 * Wired up by the editor refresh probe (?immich_refresh=1).
 	 */
 	private function flush_album_cache( string $album_id ): void {
-		foreach ( array( 'default', 'oldest', 'newest', 'random' ) as $sort ) {
-			delete_transient( $this->album_cache_key( $album_id, $sort ) );
-		}
+		$this->bump_album_cache_version( $album_id );
 	}
 
 	/**
@@ -2462,39 +2388,27 @@ class Immich_Media_Picker {
 	 *
 	 * @param string $album_id  Validated UUID.
 	 * @param string $sort      Sort key (default 'default'; expanded in Task 8).
+	 * @param int    $post_id   Host post id; threads into the cache key so
+	 *                          editing the post invalidates the entry and
+	 *                          posts by different authors don't share it.
 	 * @param int    $author_id Post author whose per-user API key authorises the
 	 *                          fetch when no site-wide key is configured. Mirrors
 	 *                          handle_proxy_request()'s author lookup so cold-cache
 	 *                          renders work for logged-out visitors.
 	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
 	 */
-	private function fetch_album_assets( string $album_id, string $sort = 'default', int $author_id = 0 ) {
-		$key = $this->album_cache_key( $album_id, $sort );
-
-		// Capture the stale payload before get_transient(): when the timeout
-		// has lapsed get_transient() deletes the underlying _transient_$key
-		// option row before returning false, so reading it afterwards would
-		// find nothing and the "serve stale when Immich is unreachable" path
-		// would never fire in the normal-expiry case.
-		$stale = $this->read_stale_transient( $key );
-
+	private function fetch_album_assets( string $album_id, string $sort = 'default', int $post_id = 0, int $author_id = 0 ) {
+		$key    = $this->album_cache_key( $album_id, $sort, $post_id );
 		$cached = get_transient( $key );
 		if ( false !== $cached && is_array( $cached ) ) {
-			$cached['stale'] = false;
 			return $cached;
 		}
 
 		$response = $this->api_request( '/api/albums/' . rawurlencode( $album_id ), 'GET', null, $author_id );
 		if ( is_wp_error( $response ) ) {
-			$is_not_found = ( 404 === $this->api_error_status( $response ) );
-			if ( ! $is_not_found && false !== $stale && is_array( $stale ) ) {
-				$stale['stale'] = true;
-				return $stale;
-			}
 			return $response;
 		}
 
-		// Guard malformed responses (kept from Task 7).
 		if ( ! isset( $response['assets'] ) || ! is_array( $response['assets'] ) ) {
 			return new \WP_Error(
 				'immich_album_malformed',
@@ -2502,8 +2416,7 @@ class Immich_Media_Picker {
 			);
 		}
 
-		$payload          = $this->prepare_album_payload( $response, $sort );
-		$payload['stale'] = false;
+		$payload = $this->prepare_album_payload( $response, $sort );
 		set_transient( $key, $payload, $this->album_cache_ttl() );
 		return $payload;
 	}
