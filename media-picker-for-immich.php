@@ -1957,8 +1957,15 @@ class Immich_Media_Picker {
 			return '';
 		}
 
-		$size    = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
-		$columns = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
+		// Per-block limit (after sort, after cap). 0 = render everything (up to the cap).
+		$limit = max( 0, (int) ( $attrs['limit'] ?? 0 ) );
+		if ( $limit > 0 ) {
+			$assets = array_slice( $assets, 0, $limit );
+		}
+
+		$size          = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
+		$columns       = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
+		$show_captions = ! empty( $attrs['showCaptions'] );
 
 		$children = '';
 		foreach ( $assets as $a ) {
@@ -1968,8 +1975,12 @@ class Immich_Media_Picker {
 			}
 			$url      = home_url( '/?immich_media_proxy=' . rawurlencode( $size ) . '&id=' . rawurlencode( $asset_id ) );
 			$alt      = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
+			$caption  = $show_captions && '' !== $alt
+				? '<figcaption class="wp-element-caption">' . esc_html( $alt ) . '</figcaption>'
+				: '';
 			$children .= '<figure class="wp-block-image size-large">'
 				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
+				. $caption
 				. '</figure>';
 		}
 
