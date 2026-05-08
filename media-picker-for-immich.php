@@ -1567,6 +1567,7 @@ class Immich_Media_Picker {
 					'code'    => $response->get_error_code(),
 				)
 			);
+			return;
 		}
 		$items = array_map(
 			function ( $a ) {
