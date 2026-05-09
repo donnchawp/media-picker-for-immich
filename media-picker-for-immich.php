@@ -903,7 +903,7 @@ class Immich_Media_Picker {
 		);
 	}
 
-	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video' );
+	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video', 'person' );
 
 	private const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
 
@@ -1809,13 +1809,27 @@ class Immich_Media_Picker {
 			wp_die( 'Invalid asset ID.', 400 );
 		}
 
+		$type       = sanitize_key( $_GET['type'] ?? 'asset' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
+		$cache_type = 'person' === $type ? 'person' : 'thumbnail';
+		$paths      = $this->get_cache_paths( $cache_type, $id );
+
+		// Cache-first: a populated picker fires 50 thumbnail requests per browse
+		// page, so without this every browse hits Immich 50× and pins a PHP
+		// process per request for the upstream timeout. Per-user is_private=true
+		// because per-user API keys mean different viewers can have different
+		// libraries — the cache is shared but the response is not.
+		if ( file_exists( $paths['file'] ) && file_exists( $paths['meta'] ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading single-line cache metadata
+			$content_type = file_get_contents( $paths['meta'] );
+			$this->serve_cached_asset( $paths['file'], $content_type, $cache_type, true );
+		}
+
 		$api_key = $this->get_api_key();
 		if ( '' === $api_key ) {
 			wp_die( 'No API key configured.', 500 );
 		}
 
-		$type = sanitize_key( $_GET['type'] ?? 'asset' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
-		$url  = 'person' === $type
+		$url = 'person' === $type
 			? rtrim( $this->get_api_url(), '/' ) . '/api/people/' . $id . '/thumbnail'
 			: rtrim( $this->get_api_url(), '/' ) . '/api/assets/' . $id . '/thumbnail';
 
@@ -1840,14 +1854,15 @@ class Immich_Media_Picker {
 		}
 		$body = wp_remote_retrieve_body( $response );
 
-		header( 'X-Content-Type-Options: nosniff' );
-		header( 'Content-Type: ' . $content_type );
-		// Picker thumbnails are user-specific (per-user API keys mean different
-		// users can have different Immich libraries) — must not be reused by
-		// shared caches across viewers.
-		header( 'Cache-Control: private, max-age=3600' );
-		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
-		exit;
+		// Best-effort cache write; concurrent fetches for the same uuid would
+		// race with last-write-wins, which is harmless because the bytes are
+		// identical. No file lock needed at this scale.
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- caching binary thumbnail
+		file_put_contents( $paths['file'], $body );
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- writing single-line cache metadata
+		file_put_contents( $paths['meta'], $content_type );
+
+		$this->serve_cached_asset( $paths['file'], $content_type, $cache_type, true );
 	}
 
 	public function ajax_import(): void {
