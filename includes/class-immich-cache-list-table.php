@@ -81,9 +81,9 @@ class Immich_Cache_List_Table extends WP_List_Table {
 		$this->total_size  = array_sum( array_column( $items, 'size' ) );
 
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- read-only sort/page params
-		$orderby = sanitize_key( $_GET['orderby'] ?? 'age' );
-		$order   = isset( $_GET['order'] ) && 'asc' === strtolower( (string) $_GET['order'] ) ? 'asc' : 'desc';
-		$paged   = max( 1, (int) ( $_GET['paged'] ?? 1 ) );
+		$orderby = sanitize_key( wp_unslash( $_GET['orderby'] ?? 'age' ) );
+		$order   = isset( $_GET['order'] ) && 'asc' === sanitize_key( wp_unslash( $_GET['order'] ) ) ? 'asc' : 'desc';
+		$paged   = max( 1, absint( wp_unslash( $_GET['paged'] ?? 1 ) ) );
 		// phpcs:enable
 
 		usort( $items, function ( $a, $b ) use ( $orderby ) {

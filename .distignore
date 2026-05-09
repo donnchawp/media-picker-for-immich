@@ -3,6 +3,7 @@
 /.gitignore
 /.wp-env.json
 /.claude
+/CLAUDE.md
 /Makefile
 /README.md
 /docs

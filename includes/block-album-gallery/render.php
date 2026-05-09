@@ -11,7 +11,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-echo Immich_Media_Picker::instance()->render_album_block(
-	is_array( $attributes ) ? $attributes : array(),
-	isset( $block ) && $block instanceof WP_Block ? $block : null
-);
+$immich_attrs = is_array( $attributes ) ? $attributes : array();
+$immich_block = isset( $block ) && $block instanceof WP_Block ? $block : null;
+// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- HTML is already escaped inside render_album_block().
+echo Immich_Media_Picker::instance()->render_album_block( $immich_attrs, $immich_block );

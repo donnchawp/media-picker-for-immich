@@ -214,10 +214,11 @@ class Immich_Media_Picker {
 		if ( 'delete' === $action ) {
 			check_admin_referer( 'bulk-cache_files' );
 			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified above
-			$selected = isset( $_REQUEST['cache_items'] ) ? (array) wp_unslash( $_REQUEST['cache_items'] ) : array();
+			$selected = isset( $_REQUEST['cache_items'] )
+				? array_map( 'sanitize_text_field', (array) wp_unslash( $_REQUEST['cache_items'] ) )
+				: array();
 			$deleted  = 0;
 			foreach ( $selected as $entry ) {
-				$entry = sanitize_text_field( $entry );
 				if ( ! str_contains( $entry, ':' ) ) {
 					continue;
 				}
@@ -1005,11 +1006,15 @@ class Immich_Media_Picker {
 		}
 		global $wpdb;
 		$placeholders = implode( ',', array_fill( 0, count( $uuids ), '%s' ) );
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- placeholders generated from count, values passed via prepare()
+		// Single optimised meta lookup: no per-row caching layer fits, the
+		// $placeholders string is %s,%s,... built from a count(), and every
+		// value is passed through $wpdb->prepare() via the array form.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_immich_asset_id' AND meta_value IN ($placeholders)",
-				...$uuids
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $placeholders is %s,%s,... from count()
+				"SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value IN ($placeholders)",
+				array_merge( array( '_immich_asset_id' ), $uuids )
 			)
 		);
 		$map = array();
@@ -1218,6 +1223,7 @@ class Immich_Media_Picker {
 		}
 
 		// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified above
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- API keys may contain characters that sanitize_text_field would strip
 		$api_key = trim( wp_unslash( $_POST['key'] ?? '' ) );
 
 		// Only admins may probe an arbitrary URL (settings-page "test before save").
@@ -2076,7 +2082,7 @@ class Immich_Media_Picker {
 		}
 
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
-		$pct = (int) ( $_POST['pct'] ?? 0 );
+		$pct = absint( wp_unslash( $_POST['pct'] ?? 0 ) );
 		if ( $pct < 10 || $pct > 90 ) {
 			wp_send_json_error( 'Out of range.' );
 			return;
