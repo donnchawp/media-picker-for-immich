@@ -1,3 +1,7 @@
+## Pre-merge checks
+
+Run `make check` before committing to `main` or opening a PR. It builds the release zip and runs Plugin Check (WP-CLI) against the built artefact, not the working tree.
+
 ## Agent skills
 
 ### Issue tracker

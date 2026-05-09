@@ -130,7 +130,10 @@ make status      # Show plugin status
 make logs        # Show WordPress debug log
 make shell       # Shell into the container
 make cli CMD="option list"  # Run WP-CLI commands
+make check       # Build the release zip and run Plugin Check against it
 ```
+
+Run `make check` before opening a PR or merging to `main`. It builds `dist/<plugin>-<version>.zip`, extracts it under a temporary slug inside wp-env, and runs the [Plugin Check](https://wordpress.org/plugins/plugin-check/) plugin via WP-CLI. Pass extra flags with `ARGS=`, e.g. `make check ARGS="--categories=security"`.
 
 ## License
 
