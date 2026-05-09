@@ -297,6 +297,8 @@ class Immich_Media_Picker {
 		// One-shot migration: existing installs already wrote immich_settings
 		// with autoload='yes'. register_setting() only affects fresh writes,
 		// so flip the stored row once.
+		// TODO: remove this block and delete the immich_settings_autoload_off
+		// option after a couple of releases (target: ~2026-08).
 		if ( ! get_option( 'immich_settings_autoload_off', false ) ) {
 			wp_set_option_autoload( 'immich_settings', false );
 			// Autoload the tiny migration flag so the check above is free
