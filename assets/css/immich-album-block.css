@@ -11,6 +11,28 @@
 	cursor: zoom-in;
 }
 
+/*
+ * Uniform-aspect cells: every gallery <img> is sized to the same aspect
+ * ratio and cropped via object-fit: cover, so a row of mixed portrait
+ * and landscape photos has no whitespace under the shorter cells. The
+ * fullsize image opened by the lightbox is unaffected.
+ *
+ * Override per gallery (or globally in a theme) by setting
+ * --immich-album-aspect on .immich-album-gallery, e.g.
+ *   .immich-album-gallery { --immich-album-aspect: 4 / 3; }
+ */
+.immich-album-gallery {
+	--immich-album-aspect: 1;
+}
+
+.immich-album-gallery > figure.wp-block-image > img {
+	width: 100%;
+	height: auto;
+	aspect-ratio: var( --immich-album-aspect );
+	object-fit: cover;
+	display: block;
+}
+
 .immich-album-overlay {
 	position: fixed;
 	inset: 0;
