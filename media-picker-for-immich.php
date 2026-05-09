@@ -147,7 +147,11 @@ class Immich_Media_Picker {
 			update_post_meta( $attach_id, '_immich_add_mode', $mode );
 		}
 
-		if ( $query->found_posts > $batch_size ) {
+		// Re-queue while this batch was full — found_posts is the pre-write total
+		// for the NOT EXISTS query, so it equals the batch size in the boundary
+		// case (multiple of $batch_size remaining) and would mark the upgrade
+		// done before the next batch ran.
+		if ( count( $query->posts ) === $batch_size ) {
 			wp_schedule_single_event( time() + 5, 'immich_upgrade_add_mode' );
 		} else {
 			update_option( 'immich_add_mode_upgrade_done', 1, false );
