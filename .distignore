@@ -11,3 +11,4 @@
 /screenshots
 /dist
 .DS_Store
+.out-of-scope
