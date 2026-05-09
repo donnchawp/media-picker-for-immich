@@ -1188,8 +1188,23 @@ class Immich_Media_Picker {
 		}
 
 		// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified above
-		$base_url = esc_url_raw( wp_unslash( $_POST['url'] ?? '' ) );
-		$api_key  = trim( wp_unslash( $_POST['key'] ?? '' ) );
+		$api_key = trim( wp_unslash( $_POST['key'] ?? '' ) );
+
+		// Only admins may probe an arbitrary URL (settings-page "test before save").
+		// Everyone else is pinned to the saved Immich URL — the per-user profile
+		// form only sets a key, so non-admins have no legitimate need to redirect
+		// the probe, and allowing it would turn this endpoint into an authenticated
+		// SSRF tool against the internal network.
+		if ( current_user_can( 'manage_options' ) ) {
+			$base_url = esc_url_raw( wp_unslash( $_POST['url'] ?? '' ) );
+			if ( '' === $base_url ) {
+				$saved    = get_option( 'immich_settings', array() );
+				$base_url = (string) ( $saved['api_url'] ?? '' );
+			}
+		} else {
+			$saved    = get_option( 'immich_settings', array() );
+			$base_url = (string) ( $saved['api_url'] ?? '' );
+		}
 		// phpcs:enable
 
 		if ( '' === $base_url ) {
