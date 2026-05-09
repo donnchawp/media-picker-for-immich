@@ -1006,7 +1006,10 @@ class Immich_Media_Picker {
 		header( 'Content-Type: ' . $content_type );
 
 		if ( 'video' === $type ) {
+			// serve_cached_video exits on every code path; the explicit return
+			// keeps the non-video flow safe if that ever changes.
 			$this->serve_cached_video( $file );
+			return;
 		}
 
 		header( 'Content-Length: ' . filesize( $file ) );
