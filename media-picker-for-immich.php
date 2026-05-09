@@ -279,6 +279,10 @@ class Immich_Media_Picker {
 			'immich_settings',
 			array(
 				'type'              => 'array',
+				// The plugin only reads immich_settings on its own admin pages,
+				// REST/AJAX, and proxy requests — never on every WP page load —
+				// so there's no benefit to autoloading it.
+				'autoload'          => false,
 				'sanitize_callback' => array( $this, 'sanitize_settings' ),
 				'default'           => array(
 					'api_url'   => self::DEFAULT_API_URL,
@@ -289,6 +293,16 @@ class Immich_Media_Picker {
 				),
 			)
 		);
+
+		// One-shot migration: existing installs already wrote immich_settings
+		// with autoload='yes'. register_setting() only affects fresh writes,
+		// so flip the stored row once.
+		if ( ! get_option( 'immich_settings_autoload_off', false ) ) {
+			wp_set_option_autoload( 'immich_settings', false );
+			// Autoload the tiny migration flag so the check above is free
+			// on every subsequent admin_init.
+			update_option( 'immich_settings_autoload_off', 1 );
+		}
 
 		add_settings_section(
 			'immich_main',
