@@ -1468,21 +1468,32 @@ class Immich_Media_Picker {
 			return $content;
 		}
 
-		// Add data-immich-lightbox to <a> tags that link to an Immich original
-		// AND directly contain an <img>. Links wrapping video or other content
-		// are left alone.
-		$content = preg_replace(
-			'/(<a\b[^>]*href="[^"]*immich_media_proxy=original[^"]*"[^>]*)(>)\s*(<img\b)/si',
-			'$1 data-immich-lightbox$2$3',
-			$content
-		);
+		// DOM-aware tagging via WP_HTML_Tag_Processor. The previous regex
+		// assumed double-quoted attributes and a specific <a><img> shape,
+		// which breaks on single-quoted attributes or page-builder output.
+		// The lightbox JS validates the response is an image at click time
+		// (img.onerror falls back to plain navigation) so anchors wrapping
+		// video or other content degrade gracefully without a content check.
+		$processor = new \WP_HTML_Tag_Processor( $content );
+		$modified  = false;
 
-		if ( str_contains( $content, 'data-immich-lightbox' ) ) {
-			wp_enqueue_style( 'immich-lightbox' );
-			wp_enqueue_script( 'immich-lightbox' );
+		while ( $processor->next_tag( 'a' ) ) {
+			$href = $processor->get_attribute( 'href' );
+			if ( ! is_string( $href ) || ! str_contains( $href, 'immich_media_proxy=original' ) ) {
+				continue;
+			}
+			$processor->set_attribute( 'data-immich-lightbox', '' );
+			$modified = true;
 		}
 
-		return $content;
+		if ( ! $modified ) {
+			return $content;
+		}
+
+		wp_enqueue_style( 'immich-lightbox' );
+		wp_enqueue_script( 'immich-lightbox' );
+
+		return $processor->get_updated_html();
 	}
 
 	public function render_settings_page(): void {
