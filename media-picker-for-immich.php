@@ -669,12 +669,19 @@ class Immich_Media_Picker {
 		$album_token   = isset( $_GET['album_token'] ) ? sanitize_text_field( wp_unslash( $_GET['album_token'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$album_post    = isset( $_GET['album_post'] ) ? absint( $_GET['album_post'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 
+		// Preview-nonce paths are user-specific (signed with the viewer's session)
+		// so the response must not be reused across users by shared caches/CDNs.
+		// Album-token and the public attachment proxy paths are stable, anonymous,
+		// and safe to cache publicly for a long time.
+		$is_private = false;
+
 		if ( '' !== $preview_nonce ) {
 			if ( ! wp_verify_nonce( $preview_nonce, 'immich_preview' ) || ! current_user_can( 'upload_files' ) ) {
 				status_header( 403 );
 				exit( 'Forbidden.' );
 			}
-			$author_id = get_current_user_id();
+			$author_id  = get_current_user_id();
+			$is_private = true;
 		} elseif ( '' !== $album_token && $album_post > 0 ) {
 			// Album-block path: signed proxy URL emitted by render_album_block.
 			// HMAC over (asset_id, post_id) with wp_salt('nonce'). Stable across
@@ -750,7 +757,7 @@ class Immich_Media_Picker {
 		if ( file_exists( $paths['file'] ) && file_exists( $paths['meta'] ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading single-line cache metadata, not a remote URL
 			$content_type = file_get_contents( $paths['meta'] );
-			$this->serve_cached_asset( $paths['file'], $content_type, $type );
+			$this->serve_cached_asset( $paths['file'], $content_type, $type, $is_private );
 		}
 
 		// Cache miss — acquire lock so only one request fetches from Immich.
@@ -769,7 +776,7 @@ class Immich_Media_Picker {
 			fclose( $lock_fh );
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 			$content_type = file_get_contents( $paths['meta'] );
-			$this->serve_cached_asset( $paths['file'], $content_type, $type );
+			$this->serve_cached_asset( $paths['file'], $content_type, $type, $is_private );
 		}
 
 		$api_key = $this->get_api_key( $author_id );
@@ -840,7 +847,7 @@ class Immich_Media_Picker {
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		fclose( $lock_fh );
 
-		$this->serve_cached_asset( $paths['file'], $content_type, $type );
+		$this->serve_cached_asset( $paths['file'], $content_type, $type, $is_private );
 	}
 
 	/**
@@ -1017,19 +1024,19 @@ class Immich_Media_Picker {
 	 *
 	 * @return never
 	 */
-	private function serve_cached_asset( string $file, string $content_type, string $type ): void {
+	private function serve_cached_asset( string $file, string $content_type, string $type, bool $is_private = false ): void {
 		header( 'X-Content-Type-Options: nosniff' );
 		header( 'Content-Type: ' . $content_type );
 
 		if ( 'video' === $type ) {
 			// serve_cached_video exits on every code path; the explicit return
 			// keeps the non-video flow safe if that ever changes.
-			$this->serve_cached_video( $file );
+			$this->serve_cached_video( $file, $is_private );
 			return;
 		}
 
 		header( 'Content-Length: ' . filesize( $file ) );
-		header( 'Cache-Control: public, max-age=31536000' );
+		header( 'Cache-Control: ' . ( $is_private ? 'private, max-age=3600' : 'public, max-age=31536000' ) );
 		readfile( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile
 		exit;
 	}
@@ -1039,7 +1046,7 @@ class Immich_Media_Picker {
 	 *
 	 * @return never
 	 */
-	private function serve_cached_video( string $file ): void {
+	private function serve_cached_video( string $file, bool $is_private = false ): void {
 		$size  = filesize( $file );
 		$range = isset( $_SERVER['HTTP_RANGE'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_RANGE'] ) ) : '';
 
@@ -1090,7 +1097,7 @@ class Immich_Media_Picker {
 
 		// Full request.
 		header( 'Content-Length: ' . $size );
-		header( 'Cache-Control: public, max-age=31536000' );
+		header( 'Cache-Control: ' . ( $is_private ? 'private, max-age=3600' : 'public, max-age=31536000' ) );
 
 		while ( ob_get_level() > 0 ) {
 			ob_end_clean();
@@ -1835,7 +1842,10 @@ class Immich_Media_Picker {
 
 		header( 'X-Content-Type-Options: nosniff' );
 		header( 'Content-Type: ' . $content_type );
-		header( 'Cache-Control: public, max-age=86400' );
+		// Picker thumbnails are user-specific (per-user API keys mean different
+		// users can have different Immich libraries) — must not be reused by
+		// shared caches across viewers.
+		header( 'Cache-Control: private, max-age=3600' );
 		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
 		exit;
 	}
