@@ -1386,7 +1386,11 @@ class Immich_Media_Picker {
 
 	public function enqueue_admin_assets( string $hook ): void {
 		$is_settings = 'settings_page_media-picker-for-immich' === $hook;
-		$is_profile  = 'profile.php' === $hook || 'user-edit.php' === $hook;
+		// Only enqueue on profile pages for users who can actually use the picker.
+		// The localized payload includes the (potentially internal) Immich URL,
+		// and the per-user API key form below is also gated on upload_files.
+		$is_profile  = ( 'profile.php' === $hook || 'user-edit.php' === $hook )
+			&& current_user_can( 'upload_files' );
 		if ( ! $is_settings && ! $is_profile ) {
 			return;
 		}
@@ -1471,6 +1475,12 @@ class Immich_Media_Picker {
 	}
 
 	public function render_user_api_key_field( \WP_User $user ): void {
+		// The picker requires upload_files; users without it have no use for an
+		// API key. Hiding the field also avoids leaking the internal Immich URL
+		// (rendered by the Test Connection button below) to Subscribers/Contributors.
+		if ( ! user_can( $user, 'upload_files' ) ) {
+			return;
+		}
 		$settings = get_option( 'immich_settings', array() );
 		// Hide if site-wide key is set.
 		if ( ! empty( $settings['api_key'] ) ) {
@@ -1505,6 +1515,11 @@ class Immich_Media_Picker {
 			return;
 		}
 		if ( ! current_user_can( 'edit_user', $user_id ) ) {
+			return;
+		}
+		// Refuse to store a key for a user who can't use the picker, mirroring
+		// the field-level guard in render_user_api_key_field.
+		if ( ! user_can( $user_id, 'upload_files' ) ) {
 			return;
 		}
 		$key = trim( wp_unslash( $_POST['immich_api_key'] ?? '' ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- API keys may contain characters that sanitize_text_field would strip
