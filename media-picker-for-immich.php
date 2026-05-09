@@ -2386,7 +2386,9 @@ class Immich_Media_Picker {
 		$lightbox_attr = '';
 		if ( $lightbox ) {
 			$lightbox_attr = ' data-immich-lightbox="1"'
-				. ' data-immich-lightbox-close="' . esc_attr__( 'Close', 'media-picker-for-immich' ) . '"';
+				. ' data-immich-lightbox-close="' . esc_attr__( 'Close', 'media-picker-for-immich' ) . '"'
+				. ' data-immich-lightbox-prev="' . esc_attr__( 'Previous image', 'media-picker-for-immich' ) . '"'
+				. ' data-immich-lightbox-next="' . esc_attr__( 'Next image', 'media-picker-for-immich' ) . '"';
 		}
 
 		return '<figure class="wp-block-gallery has-nested-images columns-' . (int) $columns . ' is-layout-flex wp-block-gallery-is-layout-flex immich-album-gallery"'

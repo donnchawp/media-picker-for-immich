@@ -23,6 +23,16 @@
 }
 
 .immich-album-overlay-stage {
+	cursor: default;
+}
+
+.immich-album-overlay-prev,
+.immich-album-overlay-next,
+.immich-album-overlay-close {
+	cursor: pointer;
+}
+
+.immich-album-overlay-stage {
 	position: relative;
 	max-width: 95vw;
 	max-height: 95vh;
@@ -50,8 +60,46 @@
 	padding: 4px 8px;
 }
 
-.immich-album-overlay-close:focus-visible {
+.immich-album-overlay-close:focus-visible,
+.immich-album-overlay-prev:focus-visible,
+.immich-album-overlay-next:focus-visible {
 	outline: 2px solid #ffffff;
+}
+
+/*
+ * Chevrons attach to the overlay (full viewport) rather than the stage so
+ * they stay pinned to the page edges when the image swaps between portrait
+ * and landscape. Semi-transparent at rest, fully opaque on hover/focus so
+ * they don't overpower the image.
+ */
+.immich-album-overlay-prev,
+.immich-album-overlay-next {
+	position: absolute;
+	top: 50%;
+	transform: translateY( -50% );
+	background: rgba( 0, 0, 0, 0.4 );
+	border: 0;
+	color: #ffffff;
+	font-size: 48px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 8px 14px;
+	border-radius: 4px;
+	opacity: 0.5;
+	transition: opacity 0.15s ease, background-color 0.15s ease;
+	/* Sit above the stage so wide images do not paint over the chevrons. */
+	z-index: 1;
+}
+
+.immich-album-overlay-prev { left: 8px; }
+.immich-album-overlay-next { right: 8px; }
+
+.immich-album-overlay-prev:hover,
+.immich-album-overlay-prev:focus-visible,
+.immich-album-overlay-next:hover,
+.immich-album-overlay-next:focus-visible {
+	opacity: 1;
+	background: rgba( 0, 0, 0, 0.7 );
 }
 
 .immich-album-more {

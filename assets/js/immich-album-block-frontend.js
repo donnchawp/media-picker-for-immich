@@ -6,6 +6,11 @@
  * proxy URL just swaps `immich_media_proxy=preview` (or whatever the gallery
  * was rendered with) for `immich_media_proxy=fullsize` — the signed token
  * (`album_token`) authorises any size for the same asset+post pair.
+ *
+ * While open the visitor can navigate to neighbouring images via on-screen
+ * chevron buttons or the keyboard (arrows + Home/End). Dismissal is via the
+ * close button, Esc, or clicking the dimmed backdrop — clicking the image
+ * itself or the chevrons does not close.
  */
 ( function () {
 	'use strict';
@@ -23,7 +28,9 @@
 		}
 	}
 
-	function openOverlay( url, alt, closeLabel ) {
+	function openOverlay( images, startIndex, labels ) {
+		var index = startIndex;
+
 		var overlay = document.createElement( 'div' );
 		overlay.className = 'immich-album-overlay';
 		overlay.setAttribute( 'role', 'dialog' );
@@ -35,20 +42,49 @@
 
 		var img = document.createElement( 'img' );
 		img.className = 'immich-album-overlay-img';
-		img.src = url;
-		img.alt = alt || '';
+
+		var prev = document.createElement( 'button' );
+		prev.type = 'button';
+		prev.className = 'immich-album-overlay-prev';
+		prev.setAttribute( 'aria-label', labels.prev || 'Previous image' );
+		prev.textContent = '‹';
+
+		var next = document.createElement( 'button' );
+		next.type = 'button';
+		next.className = 'immich-album-overlay-next';
+		next.setAttribute( 'aria-label', labels.next || 'Next image' );
+		next.textContent = '›';
 
 		var close = document.createElement( 'button' );
 		close.type = 'button';
 		close.className = 'immich-album-overlay-close';
-		close.setAttribute( 'aria-label', closeLabel || 'Close' );
+		close.setAttribute( 'aria-label', labels.close || 'Close' );
 		close.textContent = '×';
 
+		function show() {
+			var current = images[ index ];
+			img.src = getFullsizeUrl( current.currentSrc || current.src );
+			img.alt = current.alt || '';
+		}
+
+		function navigate( delta ) {
+			// Wrap around at both ends.
+			index = ( index + delta + images.length ) % images.length;
+			show();
+		}
+
+		// Chevrons attach to the overlay (full viewport) so they stay pinned
+		// to the page edges across portrait/landscape image swaps. Image and
+		// close button stay on the stage, which sizes to the image.
 		stage.appendChild( img );
 		stage.appendChild( close );
+		overlay.appendChild( prev );
 		overlay.appendChild( stage );
+		overlay.appendChild( next );
 		document.body.appendChild( overlay );
 		overlay.focus();
+
+		show();
 
 		function dismiss() {
 			document.removeEventListener( 'keydown', onKey );
@@ -57,13 +93,26 @@
 			}
 		}
 		function onKey( e ) {
-			if ( e.key === 'Escape' ) { dismiss(); }
+			switch ( e.key ) {
+				case 'Escape':     dismiss(); break;
+				case 'ArrowRight': navigate( 1 ); break;
+				case 'ArrowLeft':  navigate( -1 ); break;
+				case 'Home':       index = 0; show(); break;
+				case 'End':        index = images.length - 1; show(); break;
+			}
 		}
 		document.addEventListener( 'keydown', onKey );
-		// Any click on the overlay (backdrop, close button, or the image
-		// itself) dismisses — matches the common lightbox UX where clicking
-		// the zoomed image takes you back to the gallery.
-		overlay.addEventListener( 'click', dismiss );
+
+		// Backdrop-only dismissal: a click that bubbles to the overlay only
+		// reaches it when the user clicked outside the stage (the dimmed
+		// area). Clicks on the stage children — image, chevrons, close —
+		// each have their own handler and don't dismiss.
+		overlay.addEventListener( 'click', function ( e ) {
+			if ( e.target === overlay ) { dismiss(); }
+		} );
+		close.addEventListener( 'click', dismiss );
+		prev.addEventListener( 'click', function () { navigate( -1 ); } );
+		next.addEventListener( 'click', function () { navigate( 1 ); } );
 	}
 
 	document.addEventListener( 'click', function ( e ) {
@@ -72,12 +121,16 @@
 		var gallery = img.closest( '.immich-album-gallery' );
 		if ( ! gallery || ! gallery.hasAttribute( 'data-immich-lightbox' ) ) { return; }
 		e.preventDefault();
-		// Close-button label comes from the wrapper's data attribute so the
-		// translation lives in PHP (no wp-i18n dependency in this script).
-		openOverlay(
-			getFullsizeUrl( img.currentSrc || img.src ),
-			img.alt,
-			gallery.getAttribute( 'data-immich-lightbox-close' )
-		);
+		// Sibling list resolved at open time; gallery DOM may change later.
+		// Labels come from the wrapper's data attributes so the translations
+		// live in PHP (no wp-i18n dependency in this script).
+		var images = Array.prototype.slice.call( gallery.querySelectorAll( 'img' ) );
+		var index  = images.indexOf( img );
+		if ( index < 0 ) { index = 0; }
+		openOverlay( images, index, {
+			close: gallery.getAttribute( 'data-immich-lightbox-close' ),
+			prev:  gallery.getAttribute( 'data-immich-lightbox-prev' ),
+			next:  gallery.getAttribute( 'data-immich-lightbox-next' )
+		} );
 	} );
 }() );
