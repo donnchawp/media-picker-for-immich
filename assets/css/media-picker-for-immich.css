@@ -82,6 +82,15 @@
 	border-color: #0073aa;
 }
 
+.immich-used-thumb.is-disallowed {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.immich-used-thumb.is-disallowed:hover {
+	border-color: transparent;
+}
+
 .immich-status {
 	display: flex;
 	align-items: center;

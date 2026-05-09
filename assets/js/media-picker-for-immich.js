@@ -811,9 +811,10 @@
 					self.usedLoading = false;
 					if ( ! resp.success ) return;
 
-					var items = (resp.data.items || []).filter(function (item) {
-						return self._assetMatchesAllowed(item.type);
-					});
+					// Render every previously-added asset; the parent block's
+					// allowed media types only decide whether each tile is
+					// selectable, not whether it appears.
+					var items = resp.data.items || [];
 					self.usedNextPage = resp.data.nextPage || null;
 
 					var $grid = self.$('.immich-used-grid');
@@ -827,12 +828,15 @@
 					var selection = !self.isManageFrame &&
 						self.controller.state() &&
 						self.controller.state().get('selection');
+					var disallowedTitle = __( 'Cannot use this asset type with the current block.', 'media-picker-for-immich' );
 					items.forEach(function (item) {
 						var isSelected = selection && !!selection.get(item.attachmentId);
-						var addMode   = 'copy' === item.addMode ? 'copy' : 'select';
-						var isVideo   = 'VIDEO' === item.type;
+						var addMode    = 'copy' === item.addMode ? 'copy' : 'select';
+						var isVideo    = 'VIDEO' === item.type;
+						var isAllowed  = self._assetMatchesAllowed(item.type);
+						var titleAttr  = isAllowed ? '' : ' title="' + _.escape(disallowedTitle) + '"';
 						var $thumb = $(
-							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + (isVideo ? ' is-video' : '') + '" data-attachment-id="' + _.escape(item.attachmentId) + '" data-id="' + _.escape(item.immichId || '') + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-add-mode="' + _.escape(addMode) + '" data-filename="' + _.escape(item.title || '') + '">' +
+							'<div class="immich-used-thumb' + (isSelected ? ' selected' : '') + (isVideo ? ' is-video' : '') + (isAllowed ? '' : ' is-disallowed') + '"' + titleAttr + ' data-attachment-id="' + _.escape(item.attachmentId) + '" data-id="' + _.escape(item.immichId || '') + '" data-type="' + _.escape(item.type || 'IMAGE') + '" data-add-mode="' + _.escape(addMode) + '" data-filename="' + _.escape(item.title || '') + '">' +
 								'<img src="' + _.escape(item.thumbUrl) + '" alt="' + _.escape(item.title) + '" />' +
 								(isVideo ? self._videoOverlayHtml() : '') +
 								'<span class="immich-check dashicons dashicons-yes-alt"></span>' +
@@ -871,6 +875,14 @@
 			var attachmentId = $thumb.data('attachment-id');
 
 			if ( this.isManageFrame ) {
+				return;
+			}
+
+			// Asset type doesn't fit the current block; the tile is rendered
+			// in a disabled state and clicking is a no-op so the user keeps
+			// the visual context of what they have but can't accidentally
+			// pick something the block won't accept.
+			if ( $thumb.hasClass('is-disallowed') ) {
 				return;
 			}
 
