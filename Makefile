@@ -3,7 +3,7 @@ VERSION := $(shell grep -m1 'Version:' $(PLUGIN_SLUG).php | awk '{print $$NF}')
 DIST_DIR := dist
 ZIP := $(DIST_DIR)/$(PLUGIN_SLUG)-$(VERSION).zip
 
-.PHONY: help start stop restart status logs shell cli check release
+.PHONY: help start stop restart status logs shell cli check release pre-build publish
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -54,3 +54,10 @@ release: ## Build release zip (dist/immich-media-picker-VERSION.zip)
 	@cd $(DIST_DIR) && zip -rq $(PLUGIN_SLUG)-$(VERSION).zip $(PLUGIN_SLUG)
 	@rm -rf $(DIST_DIR)/$(PLUGIN_SLUG)
 	@echo "Created $(ZIP)"
+
+pre-build: ## Prepare a release PR (bump, changelog, make check). Usage: make pre-build VERSION=x.y.z
+	@test -n "$(VERSION)" || { echo "Usage: make pre-build VERSION=x.y.z"; exit 1; }
+	./scripts/pre-build.sh $(VERSION)
+
+publish: ## Tag, GitHub release, and WordPress.org SVN publish (run after merging the release PR). Usage: make publish [VERSION=x.y.z]
+	./scripts/publish.sh $(VERSION)

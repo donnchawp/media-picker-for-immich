@@ -139,6 +139,32 @@ make check       # Build the release zip and run Plugin Check against it
 
 Run `make check` before opening a PR or merging to `main`. It builds `dist/<plugin>-<version>.zip`, extracts it under a temporary slug inside wp-env, and runs the [Plugin Check](https://wordpress.org/plugins/plugin-check/) plugin via WP-CLI. Pass extra flags with `ARGS=`, e.g. `make check ARGS="--categories=security"`.
 
+### Releasing
+
+Releases are cut in two steps, with a PR review in between:
+
+```bash
+# 1. Prepare the release PR (run from a clean, up-to-date main)
+make pre-build VERSION=0.3.0
+```
+
+`pre-build` creates a `release/<version>` branch, bumps the version in three
+places (the `Version:` header, the `IMMICH_MEDIA_PICKER_VERSION` constant, and
+the readme.txt `Stable tag`), drafts a changelog entry from the commits since
+the last release tag and opens `readme.txt` in `$EDITOR` so you can tidy it,
+runs `make check`, then commits, pushes, and opens a PR.
+
+```bash
+# 2. After the PR is reviewed and merged, from the updated main:
+make publish VERSION=0.3.0
+```
+
+`publish` rebuilds the zip, creates an annotated git tag and a GitHub release
+(using the matching changelog section as the notes), then — after a `svn status`
+review and confirmation — publishes the build to the WordPress.org SVN repo
+(`trunk/` plus a new `tags/<version>/`, and `screenshots/` into `assets/`).
+It needs the `gh` and `svn` CLIs authenticated.
+
 ## License
 
 GPL-2.0-or-later
