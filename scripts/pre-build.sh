@@ -77,7 +77,9 @@ fi
 
 # Collect commit subjects since the last release tag (before we add our own
 # bump commit), to seed the changelog draft.
-LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+# Highest version tag, not the topologically-nearest one (matches the sort -V
+# version comparison used above).
+LAST_TAG="$(git tag --list --sort=-v:refname | head -1)"
 if [[ -n "$LAST_TAG" ]]; then
 	RANGE="$LAST_TAG..HEAD"
 	echo "Drafting changelog from commits in $RANGE"
@@ -130,7 +132,12 @@ read -r -p "Press RETURN to edit readme.txt (Ctrl-C to abort)... " _
 echo
 echo "Running make check (build + Plugin Check)..."
 if ! make check; then
-	echo "make check failed. Fix the issues, then re-run pre-build (delete branch $BRANCH first)." >&2
+	cat >&2 <<EOF
+make check failed. You are on branch $BRANCH with the version bump and
+changelog edits still in place. Either:
+  * fix the issues, then commit and push this branch and open the PR by hand; or
+  * abandon this release: git checkout main && git branch -D $BRANCH
+EOF
 	exit 1
 fi
 
@@ -141,7 +148,11 @@ echo "--------------------"
 
 read -r -p "Commit, push, and open PR for $VERSION? [y/N] " confirm
 if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-	echo "Aborted. Branch $BRANCH left in place with your changes."
+	cat <<EOF
+Aborted. Branch $BRANCH is left in place with your changes.
+Resume by committing/pushing it yourself, or abandon this release:
+  git checkout main && git branch -D $BRANCH
+EOF
 	exit 1
 fi
 
@@ -150,6 +161,7 @@ git commit -m "Release $VERSION"
 git push -u origin "$BRANCH"
 
 gh pr create \
+	--base main \
 	--title "Release $VERSION" \
 	--body "Prepares $PLUGIN_SLUG $VERSION for release. Bumps the plugin version (header + constant + Stable tag) and updates the changelog."
 
