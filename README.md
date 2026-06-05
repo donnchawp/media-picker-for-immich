@@ -12,12 +12,16 @@ A WordPress plugin that adds an **Immich** tab to the WordPress media picker and
 - **Lightbox** — full-resolution lightbox on Immich images in posts (click to enlarge, Escape to close)
 - **Media Library integration** — browse and import Immich assets directly from the Media Library grid view (Media > Library)
 - **Previously added** — the Immich tab shows assets you've already used, ready to re-select
+- **Album Gallery block** — embed a live Immich album as a gallery, with per-block columns, image size, sort, limit, captions, and lightbox options
 - **Secure API proxy** — all Immich API calls happen server-side; the API key is never exposed to the browser
 - **Per-user API keys** — each user can configure their own Immich API key; the proxy uses the post author's key so media displays correctly regardless of who is viewing
+- **Local proxy cache** — proxied media is cached on disk after the first request, with optional automatic cleanup and a Cache Files admin page to review and clear it
+- **Copy Resolution setting** — choose the resolution used when copying originals into the media library
+- **Test Connection** — verify your server URL and API key from the Settings page before saving
 
 ## Requirements
 
-- WordPress 6.4+
+- WordPress 6.5+
 - PHP 8.0+
 - An [Immich](https://immich.app/) server accessible from your WordPress server
 

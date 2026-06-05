@@ -2,9 +2,9 @@
 Contributors: donncha
 Tags: immich, media, photos, self-hosted, gallery
 Requires at least: 6.5
-Tested up to: 6.9
+Tested up to: 7.0
 Requires PHP: 8.0
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,7 +26,9 @@ Adds an "Immich" tab to the WordPress media picker modal and the Media Library g
 * **Previously added** — the Immich tab shows assets you've already used, ready to re-select
 * **Secure API proxy** — all Immich API calls happen server-side; the API key is never exposed to the browser
 * **Per-user API keys** — each user can configure their own Immich API key
-* **Local proxy cache** — proxied media is cached on disk after the first request; optional automatic cleanup with configurable lifetime
+* **Local proxy cache** — proxied media is cached on disk after the first request; optional automatic cleanup with configurable lifetime, managed from a Cache Files admin page
+* **Copy Resolution setting** — choose the resolution used when copying originals into the media library
+* **Test Connection** — verify your server URL and API key from the Settings page before saving
 
 This plugin also ships an "Immich Album Gallery" block: insert it in any post, pick an Immich album, and the post renders a live gallery of that album using the core Gallery markup (so it inherits your theme's styling and works with the WordPress core lightbox).
 
@@ -122,6 +124,18 @@ All communication uses the API key you configure in WordPress. The API key is ne
 Since Immich is self-hosted, the terms of use and privacy practices are determined by whoever operates the Immich server you connect to.
 
 == Changelog ==
+
+= 0.2.0 =
+* New: **Immich Album Gallery block** — embed a live Immich album as a gallery using the core Gallery markup, with per-block columns, image size, sort order, limit, captions, and lightbox options. Album data is cached for 5 minutes with a manual "Refresh from Immich" link for editors.
+* New: **Local proxy cache** — proxied images and videos are saved to disk on first request and served locally afterwards, with optional automatic cleanup and a configurable lifetime.
+* New: **Cache Files admin page** (Media → Cache Files) to review and clear cached thumbnails and album lists.
+* New: **Copy Resolution setting** — choose the resolution used when copying/importing originals into the media library.
+* New: **Test Connection button** on the Settings page to verify your server URL and API key before saving.
+* New: Per-tile previews and video badges in the picker, a resizable picker split, and other picker UX refinements.
+* Improved: Required Immich API key permissions are now documented inline on the Settings and Profile pages.
+* Improved: Picker type filtering is pushed into the Immich query, and previously-added assets of a mismatched type are shown but disabled.
+* Security & hardening: private Cache-Control on per-user proxy paths, per-user API key UI gated on the `upload_files` capability, and assorted Plugin Check fixes.
+* Tested up to WordPress 7.0.
 
 = 0.1.0 =
 * Initial release.
