@@ -2307,9 +2307,14 @@ class Immich_Media_Picker {
 			if ( '' === $url ) {
 				continue;
 			}
-			$alt     = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
-			$caption = $show_captions && '' !== $alt
-				? '<figcaption class="wp-element-caption">' . esc_html( $alt ) . '</figcaption>'
+			// Captions use the Immich asset description (the human-written field
+			// edited in Immich), not the filename. Alt text prefers the
+			// description too, falling back to the filename when none is set.
+			$file_name   = isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '';
+			$description = isset( $a['description'] ) ? (string) $a['description'] : '';
+			$alt         = '' !== $description ? $description : $file_name;
+			$caption     = $show_captions && '' !== $description
+				? '<figcaption class="wp-element-caption">' . esc_html( $description ) . '</figcaption>'
 				: '';
 			$children .= '<figure class="wp-block-image size-large" style="' . esc_attr( $figure_style ) . '">'
 				. '<img src="' . esc_url( $url ) . '" alt="' . esc_attr( $alt ) . '" loading="lazy" />'
@@ -2572,6 +2577,7 @@ class Immich_Media_Picker {
 				return array(
 					'id'               => isset( $a['id'] ) ? (string) $a['id'] : '',
 					'originalFileName' => isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '',
+					'description'      => isset( $a['exifInfo']['description'] ) ? (string) $a['exifInfo']['description'] : '',
 					'fileCreatedAt'    => isset( $a['fileCreatedAt'] ) ? (string) $a['fileCreatedAt'] : '',
 					'type'             => isset( $a['type'] ) ? (string) $a['type'] : 'IMAGE',
 				);
