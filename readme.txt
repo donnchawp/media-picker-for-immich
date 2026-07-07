@@ -12,7 +12,7 @@ Use photos and videos from your Immich server in WordPress without copying files
 
 == Description ==
 
-Adds an "Immich" tab to the WordPress media picker modal and the Media Library grid view. Search and browse your self-hosted [Immich](https://immich.app/) photo library, then import selected photos directly into WordPress or proxy them without copying files.
+Adds an "Immich" tab to the WordPress media picker modal and the Media Library grid view. Search and browse your self-hosted [Immich](https://immich.app/) photo library, then import selected photos directly into WordPress or proxy them without copying files. Compatible with Immich v2.x and v3.x.
 
 **Features:**
 

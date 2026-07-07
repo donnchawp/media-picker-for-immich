@@ -278,7 +278,8 @@
 		},
 
 		/**
-		 * Parse Immich's duration string ("0:01:23.456" or seconds) into "m:ss".
+		 * Parse an Immich duration into "m:ss": a v2 "0:01:23.456" string, or the
+		 * whole-second count the server sends on v3 (normalized server-side).
 		 */
 		_durationLabel: function (raw) {
 			if (!raw) return '';
