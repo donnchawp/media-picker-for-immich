@@ -2575,9 +2575,11 @@ class Immich_Media_Picker {
 
 	/**
 	 * Fetch an album's assets on Immich v3, which no longer inlines them in the
-	 * album response. Assets come from the search endpoints, ordered server-side,
-	 * so no client-side sort is applied. Produces the same cache payload shape as
-	 * prepare_album_payload().
+	 * album response. Assets come from the metadata search ordered server-side;
+	 * the random sort shuffles the fetched page locally because
+	 * /api/search/random scopes to the requesting user and their partners and
+	 * would drop other members' assets from shared albums. Produces the same
+	 * cache payload shape as prepare_album_payload().
 	 *
 	 * @param array  $album     Raw Immich /api/albums/{id} response (no 'assets').
 	 * @param string $album_id  Validated album UUID.
@@ -2592,71 +2594,52 @@ class Immich_Media_Picker {
 			__( 'Immich returned an unexpected album response.', 'media-picker-for-immich' )
 		);
 
-		if ( 'random' === $sort ) {
+		// Metadata search sorts by fileCreatedAt; map the picker's sort keys
+		// to its order, falling back to the album's own configured order.
+		switch ( $sort ) {
+			case 'oldest':
+				$order = 'asc';
+				break;
+			case 'newest':
+				$order = 'desc';
+				break;
+			default:
+				$order = in_array( $album['order'] ?? '', array( 'asc', 'desc' ), true ) ? (string) $album['order'] : 'desc';
+				break;
+		}
+
+		$items = array();
+		$page  = 1;
+		do {
 			$response = $this->api_request(
-				'/api/search/random',
+				'/api/search/metadata',
 				'POST',
 				array(
-					'albumIds'   => array( $album_id ),
-					'withExif'   => true,
-					'visibility' => 'timeline',
-					'size'       => $cap,
+					'albumIds' => array( $album_id ),
+					'withExif' => true,
+					'order'    => $order,
+					'size'     => min( $cap, 1000 ),
+					'page'     => $page,
 				),
 				$author_id
 			);
 			if ( is_wp_error( $response ) ) {
 				return $response;
 			}
-			if ( ! is_array( $response ) ) {
+			if ( ! isset( $response['assets']['items'] ) || ! is_array( $response['assets']['items'] ) ) {
 				return $malformed;
 			}
-			$items = array_slice( array_values( $response ), 0, $cap );
-		} else {
-			// Metadata search sorts by fileCreatedAt; map the picker's sort keys
-			// to its order, falling back to the album's own configured order.
-			switch ( $sort ) {
-				case 'oldest':
-					$order = 'asc';
-					break;
-				case 'newest':
-					$order = 'desc';
-					break;
-				default:
-					$order = in_array( $album['order'] ?? '', array( 'asc', 'desc' ), true ) ? (string) $album['order'] : 'desc';
-					break;
+			if ( empty( $response['assets']['items'] ) ) {
+				break;
 			}
+			$items     = array_merge( $items, $response['assets']['items'] );
+			$next_page = $response['assets']['nextPage'] ?? null;
+			++$page;
+		} while ( null !== $next_page && count( $items ) < $cap );
 
-			$items = array();
-			$page  = 1;
-			do {
-				$response = $this->api_request(
-					'/api/search/metadata',
-					'POST',
-					array(
-						'albumIds'   => array( $album_id ),
-						'withExif'   => true,
-						'visibility' => 'timeline',
-						'order'      => $order,
-						'size'       => min( $cap, 1000 ),
-						'page'       => $page,
-					),
-					$author_id
-				);
-				if ( is_wp_error( $response ) ) {
-					return $response;
-				}
-				if ( ! isset( $response['assets']['items'] ) || ! is_array( $response['assets']['items'] ) ) {
-					return $malformed;
-				}
-				if ( empty( $response['assets']['items'] ) ) {
-					break;
-				}
-				$items     = array_merge( $items, $response['assets']['items'] );
-				$next_page = $response['assets']['nextPage'] ?? null;
-				++$page;
-			} while ( null !== $next_page && count( $items ) < $cap );
-
-			$items = array_slice( $items, 0, $cap );
+		$items = array_slice( array_filter( $items, 'is_array' ), 0, $cap );
+		if ( 'random' === $sort ) {
+			$items = $this->sort_album_assets( $items, 'random' );
 		}
 
 		$total = isset( $album['assetCount'] ) ? (int) $album['assetCount'] : count( $items );
@@ -2689,7 +2672,7 @@ class Immich_Media_Picker {
 		$trimmed = array_slice( $sorted, 0, $cap );
 
 		// Reduce to the fields render uses.
-		$minimal = array_map( array( $this, 'map_album_asset' ), $trimmed );
+		$minimal = array_map( array( $this, 'map_album_asset' ), array_values( array_filter( $trimmed, 'is_array' ) ) );
 
 		return array(
 			'assets'      => $minimal,
