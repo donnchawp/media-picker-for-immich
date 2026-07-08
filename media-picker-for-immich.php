@@ -2578,8 +2578,10 @@ class Immich_Media_Picker {
 	 * album response. Assets come from the metadata search ordered server-side;
 	 * the random sort shuffles the fetched page locally because
 	 * /api/search/random scopes to the requesting user and their partners and
-	 * would drop other members' assets from shared albums. Produces the same
-	 * cache payload shape as prepare_album_payload().
+	 * would drop other members' assets from shared albums. Unlike v2, which
+	 * shuffled the full inline list, random on v3 samples only the first
+	 * album_max_assets() items in album order. Produces the same cache
+	 * payload shape as prepare_album_payload().
 	 *
 	 * @param array  $album     Raw Immich /api/albums/{id} response (no 'assets').
 	 * @param string $album_id  Validated album UUID.
@@ -2588,11 +2590,7 @@ class Immich_Media_Picker {
 	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
 	 */
 	private function fetch_album_assets_v3( array $album, string $album_id, string $sort, int $author_id ) {
-		$cap        = $this->album_max_assets();
-		$malformed  = new \WP_Error(
-			'immich_album_malformed',
-			__( 'Immich returned an unexpected album response.', 'media-picker-for-immich' )
-		);
+		$cap = $this->album_max_assets();
 
 		// Metadata search sorts by fileCreatedAt; map the picker's sort keys
 		// to its order, falling back to the album's own configured order.
@@ -2627,7 +2625,10 @@ class Immich_Media_Picker {
 				return $response;
 			}
 			if ( ! isset( $response['assets']['items'] ) || ! is_array( $response['assets']['items'] ) ) {
-				return $malformed;
+				return new \WP_Error(
+					'immich_album_malformed',
+					__( 'Immich returned an unexpected album response.', 'media-picker-for-immich' )
+				);
 			}
 			if ( empty( $response['assets']['items'] ) ) {
 				break;
