@@ -1640,6 +1640,23 @@ class Immich_Media_Picker {
 		);
 	}
 
+	/**
+	 * Normalise an Immich asset duration to a display string.
+	 *
+	 * Immich v2 returns a "H:MM:SS.mmm" string; v3 returns a nullable integer of
+	 * milliseconds. Numeric values are rounded to whole seconds; strings pass
+	 * through unchanged.
+	 *
+	 * @param mixed $duration Raw `duration` value from an Immich asset.
+	 * @return string
+	 */
+	private function format_duration( $duration ): string {
+		if ( is_int( $duration ) || is_float( $duration ) ) {
+			return (string) round( $duration / 1000 );
+		}
+		return (string) $duration;
+	}
+
 	public function ajax_browse(): void {
 		if ( ! $this->verify_ajax_request() ) {
 			return;
@@ -1649,9 +1666,10 @@ class Immich_Media_Picker {
 		$page = max( 1, $page );
 
 		$body       = array(
-			'size'  => 50,
-			'page'  => $page,
-			'order' => 'desc',
+			'size'       => 50,
+			'page'       => $page,
+			'order'      => 'desc',
+			'visibility' => 'timeline',
 		);
 		$asset_type = sanitize_text_field( wp_unslash( $_GET['assetType'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in verify_ajax_request()
 		if ( in_array( $asset_type, array( 'IMAGE', 'VIDEO' ), true ) ) {
@@ -1681,7 +1699,7 @@ class Immich_Media_Picker {
 				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
 			);
 			if ( 'VIDEO' === $item_type && ! empty( $asset['duration'] ) ) {
-				$item['duration'] = (string) $asset['duration'];
+				$item['duration'] = $this->format_duration( $asset['duration'] );
 			}
 			$result[] = $item;
 		}
@@ -1706,7 +1724,7 @@ class Immich_Media_Picker {
 		$asset_type   = in_array( $asset_type, array( 'IMAGE', 'VIDEO' ), true ) ? $asset_type : '';
 
 		if ( '' !== $query ) {
-			$body = array( 'query' => $query, 'size' => 50, 'page' => $page );
+			$body = array( 'query' => $query, 'size' => 50, 'page' => $page, 'visibility' => 'timeline' );
 			if ( ! empty( $person_ids ) ) {
 				$body['personIds'] = $person_ids;
 			}
@@ -1715,7 +1733,7 @@ class Immich_Media_Picker {
 			}
 			$response = $this->api_request( '/api/search/smart', 'POST', $body );
 		} elseif ( ! empty( $person_ids ) ) {
-			$body = array( 'personIds' => $person_ids, 'size' => 50, 'page' => $page );
+			$body = array( 'personIds' => $person_ids, 'size' => 50, 'page' => $page, 'visibility' => 'timeline' );
 			if ( '' !== $asset_type ) {
 				$body['type'] = $asset_type;
 			}
@@ -1746,7 +1764,7 @@ class Immich_Media_Picker {
 				'filename' => $asset['originalFileName'] ?? $asset['id'] . '.jpg',
 			);
 			if ( 'VIDEO' === $item_type && ! empty( $asset['duration'] ) ) {
-				$item['duration'] = (string) $asset['duration'];
+				$item['duration'] = $this->format_duration( $asset['duration'] );
 			}
 			$result[] = $item;
 		}
@@ -2539,16 +2557,99 @@ class Immich_Media_Picker {
 			return $response;
 		}
 
-		if ( ! isset( $response['assets'] ) || ! is_array( $response['assets'] ) ) {
-			return new \WP_Error(
-				'immich_album_malformed',
-				__( 'Immich returned an unexpected album response.', 'media-picker-for-immich' )
-			);
+		if ( isset( $response['assets'] ) && is_array( $response['assets'] ) ) {
+			// Immich v2 inlines the album's asset list in the response.
+			$payload = $this->prepare_album_payload( $response, $sort );
+		} else {
+			// Immich v3 dropped the inline list; fetch assets via search.
+			$payload = $this->fetch_album_assets_v3( $response, $album_id, $sort, $author_id );
 		}
 
-		$payload = $this->prepare_album_payload( $response, $sort );
+		if ( is_wp_error( $payload ) ) {
+			return $payload;
+		}
+
 		set_transient( $key, $payload, $this->album_cache_ttl() );
 		return $payload;
+	}
+
+	/**
+	 * Fetch an album's assets on Immich v3, which no longer inlines them in the
+	 * album response. Assets come from the metadata search ordered server-side;
+	 * the random sort shuffles the fetched page locally because
+	 * /api/search/random scopes to the requesting user and their partners and
+	 * would drop other members' assets from shared albums. Unlike v2, which
+	 * shuffled the full inline list, random on v3 samples only the first
+	 * album_max_assets() items in album order. Produces the same cache
+	 * payload shape as prepare_album_payload().
+	 *
+	 * @param array  $album     Raw Immich /api/albums/{id} response (no 'assets').
+	 * @param string $album_id  Validated album UUID.
+	 * @param string $sort      One of 'default', 'oldest', 'newest', 'random'.
+	 * @param int    $author_id Post author whose per-user API key authorises the fetch.
+	 * @return array{assets: array, total_count: int, fetched_at: int}|\WP_Error
+	 */
+	private function fetch_album_assets_v3( array $album, string $album_id, string $sort, int $author_id ) {
+		$cap = $this->album_max_assets();
+
+		// Metadata search sorts by fileCreatedAt; map the picker's sort keys
+		// to its order, falling back to the album's own configured order.
+		switch ( $sort ) {
+			case 'oldest':
+				$order = 'asc';
+				break;
+			case 'newest':
+				$order = 'desc';
+				break;
+			default:
+				$order = in_array( $album['order'] ?? '', array( 'asc', 'desc' ), true ) ? (string) $album['order'] : 'desc';
+				break;
+		}
+
+		$items = array();
+		$page  = 1;
+		do {
+			$response = $this->api_request(
+				'/api/search/metadata',
+				'POST',
+				array(
+					'albumIds' => array( $album_id ),
+					'withExif' => true,
+					'order'    => $order,
+					'size'     => min( $cap, 1000 ),
+					'page'     => $page,
+				),
+				$author_id
+			);
+			if ( is_wp_error( $response ) ) {
+				return $response;
+			}
+			if ( ! isset( $response['assets']['items'] ) || ! is_array( $response['assets']['items'] ) ) {
+				return new \WP_Error(
+					'immich_album_malformed',
+					__( 'Immich returned an unexpected album response.', 'media-picker-for-immich' )
+				);
+			}
+			if ( empty( $response['assets']['items'] ) ) {
+				break;
+			}
+			$items     = array_merge( $items, $response['assets']['items'] );
+			$next_page = $response['assets']['nextPage'] ?? null;
+			++$page;
+		} while ( null !== $next_page && count( $items ) < $cap );
+
+		$items = array_slice( array_filter( $items, 'is_array' ), 0, $cap );
+		if ( 'random' === $sort ) {
+			$items = $this->sort_album_assets( $items, 'random' );
+		}
+
+		$total = isset( $album['assetCount'] ) ? (int) $album['assetCount'] : count( $items );
+
+		return array(
+			'assets'      => array_map( array( $this, 'map_album_asset' ), $items ),
+			'total_count' => $total,
+			'fetched_at'  => time(),
+		);
 	}
 
 	/**
@@ -2572,23 +2673,28 @@ class Immich_Media_Picker {
 		$trimmed = array_slice( $sorted, 0, $cap );
 
 		// Reduce to the fields render uses.
-		$minimal = array_map(
-			function ( $a ) {
-				return array(
-					'id'               => isset( $a['id'] ) ? (string) $a['id'] : '',
-					'originalFileName' => isset( $a['originalFileName'] ) ? (string) $a['originalFileName'] : '',
-					'description'      => isset( $a['exifInfo']['description'] ) ? (string) $a['exifInfo']['description'] : '',
-					'fileCreatedAt'    => isset( $a['fileCreatedAt'] ) ? (string) $a['fileCreatedAt'] : '',
-					'type'             => isset( $a['type'] ) ? (string) $a['type'] : 'IMAGE',
-				);
-			},
-			$trimmed
-		);
+		$minimal = array_map( array( $this, 'map_album_asset' ), array_values( array_filter( $trimmed, 'is_array' ) ) );
 
 		return array(
 			'assets'      => $minimal,
 			'total_count' => $total,
 			'fetched_at'  => time(),
+		);
+	}
+
+	/**
+	 * Reduce a raw Immich asset to the minimal field set the gallery render uses.
+	 *
+	 * @param array $asset Raw AssetResponseDto from Immich.
+	 * @return array{id: string, originalFileName: string, description: string, fileCreatedAt: string, type: string}
+	 */
+	private function map_album_asset( array $asset ): array {
+		return array(
+			'id'               => isset( $asset['id'] ) ? (string) $asset['id'] : '',
+			'originalFileName' => isset( $asset['originalFileName'] ) ? (string) $asset['originalFileName'] : '',
+			'description'      => isset( $asset['exifInfo']['description'] ) ? (string) $asset['exifInfo']['description'] : '',
+			'fileCreatedAt'    => isset( $asset['fileCreatedAt'] ) ? (string) $asset['fileCreatedAt'] : '',
+			'type'             => isset( $asset['type'] ) ? (string) $asset['type'] : 'IMAGE',
 		);
 	}
 
