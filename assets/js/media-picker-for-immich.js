@@ -715,6 +715,8 @@
 			var succeeded = 0;
 			var failed = 0;
 			var total = ids.length;
+			// Attach to the post being edited; 0 outside the editor.
+			var postId = ( wp.media.view.settings.post && wp.media.view.settings.post.id ) || 0;
 
 			function next(index) {
 				if ( index >= ids.length ) {
@@ -732,8 +734,7 @@
 						action: action,
 						nonce: config.nonce,
 						id: ids[index],
-						// Attach to the post being edited; 0 outside the editor.
-						post_id: ( wp.media.view.settings.post && wp.media.view.settings.post.id ) || 0,
+						post_id: postId,
 					},
 					dataType: 'json',
 					success: function (resp) {

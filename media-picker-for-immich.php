@@ -1908,7 +1908,8 @@ class Immich_Media_Picker {
 	 */
 	private function requested_post_parent(): int {
 		$post_id = absint( $_POST['post_id'] ?? 0 ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
-		if ( $post_id <= 0 || ! get_post( $post_id ) || ! current_user_can( 'edit_post', $post_id ) ) {
+		// edit_post is false for a nonexistent post; skip 0 so it can't fall back to the global post.
+		if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
 			return 0;
 		}
 		return $post_id;
