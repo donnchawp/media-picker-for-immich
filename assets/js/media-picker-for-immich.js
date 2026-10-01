@@ -732,6 +732,8 @@
 						action: action,
 						nonce: config.nonce,
 						id: ids[index],
+						// Attach to the post being edited; 0 outside the editor.
+						post_id: ( wp.media.view.settings.post && wp.media.view.settings.post.id ) || 0,
 					},
 					dataType: 'json',
 					success: function (resp) {
