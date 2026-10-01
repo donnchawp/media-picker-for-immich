@@ -2053,6 +2053,11 @@ class Immich_Media_Picker {
 			'fields'         => 'ids',
 		) );
 		if ( ! empty( $existing ) ) {
+			// Like core's insert-into-post, attach it only if it's unattached.
+			$parent = $this->requested_post_parent();
+			if ( $parent && ! wp_get_post_parent_id( $existing[0] ) ) {
+				wp_update_post( array( 'ID' => $existing[0], 'post_parent' => $parent ) );
+			}
 			wp_send_json_success( array( 'attachmentId' => $existing[0] ) );
 			return;
 		}
@@ -2066,7 +2071,6 @@ class Immich_Media_Picker {
 			'guid'           => home_url( '/?immich_media_proxy=' . $proxy_type . '&id=' . rawurlencode( $id ) ),
 		);
 
-		// Only new attachments get a parent; a reused one above keeps its own.
 		$attach_id = wp_insert_attachment( $attachment, false, $this->requested_post_parent() );
 		if ( is_wp_error( $attach_id ) ) {
 			wp_send_json_error( 'Failed to create attachment.' );
