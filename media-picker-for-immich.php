@@ -1900,6 +1900,21 @@ class Immich_Media_Picker {
 		$this->serve_cached_asset( $paths['file'], $content_type, $cache_type, true );
 	}
 
+	/**
+	 * The post a new attachment should be attached to, as sent by the picker.
+	 *
+	 * Returns 0 (unattached) when there's no post context, the post doesn't
+	 * exist, or the current user can't edit it.
+	 */
+	private function requested_post_parent(): int {
+		$post_id = absint( $_POST['post_id'] ?? 0 ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in verify_ajax_request()
+		// edit_post is false for a nonexistent post; skip 0 so it can't fall back to the global post.
+		if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+			return 0;
+		}
+		return $post_id;
+	}
+
 	public function ajax_import(): void {
 		if ( ! $this->verify_ajax_request() ) {
 			return;
@@ -1979,7 +1994,7 @@ class Immich_Media_Picker {
 			'post_status'    => 'inherit',
 		);
 
-		$attach_id = wp_insert_attachment( $attachment, $dest_path );
+		$attach_id = wp_insert_attachment( $attachment, $dest_path, $this->requested_post_parent() );
 		if ( is_wp_error( $attach_id ) ) {
 			wp_delete_file( $dest_path );
 			wp_send_json_error( 'Failed to create attachment.' );
@@ -2038,6 +2053,11 @@ class Immich_Media_Picker {
 			'fields'         => 'ids',
 		) );
 		if ( ! empty( $existing ) ) {
+			// Like core's insert-into-post, attach it only if it's unattached.
+			$parent = $this->requested_post_parent();
+			if ( $parent && ! wp_get_post_parent_id( $existing[0] ) ) {
+				wp_update_post( array( 'ID' => $existing[0], 'post_parent' => $parent ) );
+			}
 			wp_send_json_success( array( 'attachmentId' => $existing[0] ) );
 			return;
 		}
@@ -2051,7 +2071,7 @@ class Immich_Media_Picker {
 			'guid'           => home_url( '/?immich_media_proxy=' . $proxy_type . '&id=' . rawurlencode( $id ) ),
 		);
 
-		$attach_id = wp_insert_attachment( $attachment );
+		$attach_id = wp_insert_attachment( $attachment, false, $this->requested_post_parent() );
 		if ( is_wp_error( $attach_id ) ) {
 			wp_send_json_error( 'Failed to create attachment.' );
 			return;
