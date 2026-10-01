@@ -54,6 +54,7 @@
 				$result.append($('<strong></strong>').text(' ' + (data.message || __('Connected.', 'media-picker-for-immich'))));
 
 				var scopes = data.scopes || {};
+				var codes = data.codes || {};
 				var $list = $('<ul class="immich-test-scopes"></ul>');
 				Object.keys(scopes).forEach(function (slug) {
 					var status = scopes[slug];
@@ -69,7 +70,10 @@
 						label = __('not verified (no assets in library)', 'media-picker-for-immich');
 					} else {
 						icon = 'dashicons-warning';
-						label = __('error', 'media-picker-for-immich');
+						label = codes[slug]
+							/* translators: %d: HTTP status code */
+							? sprintf(__('error (HTTP %d)', 'media-picker-for-immich'), codes[slug])
+							: __('error', 'media-picker-for-immich');
 					}
 					var $li = $('<li></li>')
 						.append($('<span class="dashicons"></span>').addClass(icon))
