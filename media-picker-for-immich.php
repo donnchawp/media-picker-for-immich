@@ -1281,11 +1281,16 @@ class Immich_Media_Picker {
 			}
 		}
 
+		// HTTP codes for scopes that errored, so the UI can show why.
+		$codes = array();
 		foreach ( array( 'asset.read', 'asset.view', 'asset.download', 'person.read', 'album.read' ) as $slug ) {
 			if ( ! isset( $probes[ $slug ] ) ) {
 				$scopes[ $slug ] = 'unverified';
 			} else {
 				$scopes[ $slug ] = $this->scope_status( $probes[ $slug ] );
+				if ( 'error' === $scopes[ $slug ] && $probes[ $slug ]['code'] > 0 ) {
+					$codes[ $slug ] = $probes[ $slug ]['code'];
+				}
 			}
 		}
 
@@ -1320,6 +1325,7 @@ class Immich_Media_Picker {
 				'ok'      => true,
 				'status'  => 'connected',
 				'scopes'  => $scopes,
+				'codes'   => $codes,
 				'message' => __( 'Connected.', 'media-picker-for-immich' ),
 			) );
 		}
