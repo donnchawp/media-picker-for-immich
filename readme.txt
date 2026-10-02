@@ -4,7 +4,7 @@ Tags: immich, media, photos, self-hosted, gallery
 Requires at least: 6.5
 Tested up to: 7.0
 Requires PHP: 8.0
-Stable tag: 0.2.0
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -124,6 +124,14 @@ All communication uses the API key you configure in WordPress. The API key is ne
 Since Immich is self-hosted, the terms of use and privacy practices are determined by whoever operates the Immich server you connect to.
 
 == Changelog ==
+
+= 0.3.0 =
+* Add make pre-build/publish release automation (#29)
+* Use Immich asset description for album gallery captions (#30)
+* Support the Immich v3 API (#37)
+* Attach Immich attachments to the post they were added from (#40)
+* Show the HTTP code when a connection test scope errors (#39)
+* Rebuild the release zip from scratch and exclude wp-env overrides (#41)
 
 = 0.2.0 =
 * New: **Immich Album Gallery block** — embed a live Immich album as a gallery using the core Gallery markup, with per-block columns, image size, sort order, limit, captions, and lightbox options. Album data is cached for 5 minutes with a manual "Refresh from Immich" link for editors.
