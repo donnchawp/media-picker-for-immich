@@ -21,11 +21,11 @@
 	vertical-align: middle;
 }
 
-.immich-test-result.immich-test-ok .dashicons {
+.immich-test-result.immich-test-ok > .dashicons {
 	color: #007017;
 }
 
-.immich-test-result.immich-test-fail .dashicons {
+.immich-test-result.immich-test-fail > .dashicons {
 	color: #b32d2e;
 }
 
