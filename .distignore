@@ -2,6 +2,7 @@
 /.git
 /.gitignore
 /.wp-env.json
+/.wp-env.override.json
 /.claude
 /CLAUDE.md
 /Makefile

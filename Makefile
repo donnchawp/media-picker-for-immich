@@ -48,7 +48,7 @@ check: release ## Run Plugin Check on the built release zip
 
 release: ## Build release zip (dist/immich-media-picker-VERSION.zip)
 	@echo "Building $(ZIP)..."
-	@rm -rf $(DIST_DIR)/$(PLUGIN_SLUG)
+	@rm -rf $(DIST_DIR)/$(PLUGIN_SLUG) $(ZIP)
 	@mkdir -p $(DIST_DIR)/$(PLUGIN_SLUG)
 	@rsync -a --exclude-from=.distignore . $(DIST_DIR)/$(PLUGIN_SLUG)/
 	@cd $(DIST_DIR) && zip -rq $(PLUGIN_SLUG)-$(VERSION).zip $(PLUGIN_SLUG)
