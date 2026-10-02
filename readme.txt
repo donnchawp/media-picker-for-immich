@@ -126,12 +126,10 @@ Since Immich is self-hosted, the terms of use and privacy practices are determin
 == Changelog ==
 
 = 0.3.0 =
-* Add make pre-build/publish release automation (#29)
-* Use Immich asset description for album gallery captions (#30)
-* Support the Immich v3 API (#37)
-* Attach Immich attachments to the post they were added from (#40)
-* Show the HTTP code when a connection test scope errors (#39)
-* Rebuild the release zip from scratch and exclude wp-env overrides (#41)
+* New: Support for Immich 3. Album Gallery blocks load their photos from the new search API when the server doesn't include them in the album response, and video durations display correctly.
+* Improved: Images and videos added from the picker are now attached to the post being edited, like normal uploads. Previously added proxy attachments are attached the next time they're used in a post, if they're still unattached.
+* Improved: The connection test shows the HTTP status code when a permission check fails with an unexpected response.
+* Improved: Album Gallery captions use the Immich asset description.
 
 = 0.2.0 =
 * New: **Immich Album Gallery block** — embed a live Immich album as a gallery using the core Gallery markup, with per-block columns, image size, sort order, limit, captions, and lightbox options. Album data is cached for 5 minutes with a manual "Refresh from Immich" link for editors.
