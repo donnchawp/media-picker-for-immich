@@ -2,7 +2,7 @@
 Contributors: donncha
 Tags: immich, media, photos, self-hosted, gallery
 Requires at least: 6.5
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 8.0
 Stable tag: 0.3.0
 License: GPLv2 or later
