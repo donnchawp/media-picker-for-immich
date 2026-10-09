@@ -26,6 +26,12 @@ class Immich_Media_Picker {
 
 	private const COPY_SIZE_CHOICES = array( 'original', 'fullsize', 'preview', 'thumbnail' );
 
+	// Longest edge (px) served by Immich's thumbnail and preview renditions
+	// (preview is Immich's default size). Used to pick a proxy source in
+	// filter_image_downsize().
+	private const PROXY_THUMBNAIL_MAX_EDGE = 250;
+	private const PROXY_PREVIEW_MAX_EDGE   = 1440;
+
 	/**
 	 * Singleton instance, set in the constructor.
 	 */
@@ -1609,37 +1615,56 @@ class Immich_Media_Picker {
 			return $downsize;
 		}
 
-		$meta      = wp_get_attachment_metadata( $attachment_id );
-		$width     = $meta['width'] ?? 0;
-		$height    = $meta['height'] ?? 0;
-		$size_slug = is_array( $size ) ? '' : $size;
+		$meta   = wp_get_attachment_metadata( $attachment_id );
+		$width  = $meta['width'] ?? 0;
+		$height = $meta['height'] ?? 0;
 
-		if ( 'full' === $size_slug ) {
-			return array(
-				home_url( '/?immich_media_proxy=original&id=' . rawurlencode( $immich_id ) ),
-				$width,
-				$height,
-				false,
-			);
-		}
+		$full = array(
+			home_url( '/?immich_media_proxy=original&id=' . rawurlencode( $immich_id ) ),
+			$width,
+			$height,
+			false,
+		);
 
-		// For array sizes (e.g. [100, 100] from srcset), use the requested dimensions.
+		// Target box: the requested [w, h], or the registered size's bounds.
+		// Unknown slugs (and 'full') get the original.
 		if ( is_array( $size ) ) {
-			return array(
-				home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
-				(int) ( $size[0] ?? 250 ),
-				(int) ( $size[1] ?? 250 ),
-				true,
-			);
+			$box_w = (int) ( $size[0] ?? 0 );
+			$box_h = (int) ( $size[1] ?? 0 );
+		} else {
+			$subsizes = wp_get_registered_image_subsizes();
+			if ( ! isset( $subsizes[ $size ] ) ) {
+				return $full;
+			}
+			$box_w = (int) $subsizes[ $size ]['width'];
+			$box_h = (int) $subsizes[ $size ]['height'];
 		}
 
-		// Return accurate dimensions from stored metadata when available.
-		$size_data = $meta['sizes'][ $size_slug ] ?? null;
-		$w         = $size_data['width'] ?? 250;
-		$h         = $size_data['height'] ?? 250;
+		// The proxy can't crop, so fit the original proportionally inside the
+		// box (no upscaling) and ignore the size's crop flag. A 0 box edge
+		// means unconstrained.
+		if ( $width > 0 && $height > 0 ) {
+			list( $w, $h ) = wp_constrain_dimensions( $width, $height, $box_w, $box_h );
+		} else {
+			$w = $box_w;
+			$h = $box_h;
+		}
+
+		// Pick the smallest Immich rendition that covers the longest edge.
+		// 'full' still serves the original, via $full.
+		$longest = max( $w, $h );
+		if ( $longest <= self::PROXY_THUMBNAIL_MAX_EDGE ) {
+			$type = 'thumbnail';
+		} elseif ( $longest <= self::PROXY_PREVIEW_MAX_EDGE ) {
+			$type = 'preview';
+		} else {
+			// fullsize, not original: browser-renderable for HEIC/RAW sources
+			// and doesn't expose the original file's EXIF/GPS.
+			$type = 'fullsize';
+		}
 
 		return array(
-			home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
+			home_url( '/?immich_media_proxy=' . $type . '&id=' . rawurlencode( $immich_id ) ),
 			$w,
 			$h,
 			true,
