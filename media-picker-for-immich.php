@@ -26,11 +26,14 @@ class Immich_Media_Picker {
 
 	private const COPY_SIZE_CHOICES = array( 'original', 'fullsize', 'preview', 'thumbnail' );
 
-	// Longest edge (px) served by Immich's thumbnail and preview renditions
-	// (preview is Immich's default size). Used to pick a proxy source in
-	// filter_image_downsize().
-	private const PROXY_THUMBNAIL_MAX_EDGE = 250;
-	private const PROXY_PREVIEW_MAX_EDGE   = 1440;
+	// Shortest edge (px) of Immich's thumbnail and preview renditions at
+	// Immich's default settings; the long edge scales with the aspect ratio.
+	// Used by proxy_rendition_sizes() when the server's own settings can't
+	// be read.
+	private const PROXY_DEFAULT_THUMBNAIL_SIZE = 250;
+	private const PROXY_DEFAULT_PREVIEW_SIZE   = 1440;
+
+	private const RENDITION_SIZES_TRANSIENT = 'immich_rendition_sizes';
 
 	/**
 	 * Singleton instance, set in the constructor.
@@ -109,6 +112,7 @@ class Immich_Media_Picker {
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
 		add_filter( 'the_content', array( $this, 'maybe_enqueue_lightbox' ) );
 		add_action( 'immich_cache_gc', array( $this, 'run_cache_gc' ) );
+		add_action( 'update_option_immich_settings', array( $this, 'flush_rendition_sizes' ) );
 	}
 
 	/**
@@ -1118,7 +1122,7 @@ class Immich_Media_Picker {
 		exit;
 	}
 
-	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null, int $user_id = 0 ): array|\WP_Error {
+	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null, int $user_id = 0, int $timeout = 30 ): array|\WP_Error {
 		$api_key = $this->get_api_key( $user_id );
 		if ( '' === $api_key ) {
 			return new \WP_Error( 'no_api_key', __( 'No Immich API key configured.', 'media-picker-for-immich' ) );
@@ -1131,7 +1135,7 @@ class Immich_Media_Picker {
 				'Accept'       => 'application/json',
 				'Content-Type' => 'application/json',
 			),
-			'timeout' => 30,
+			'timeout' => $timeout,
 		);
 
 		if ( 'POST' === $method ) {
@@ -1650,12 +1654,16 @@ class Immich_Media_Picker {
 			$h = $box_h;
 		}
 
-		// Pick the smallest Immich rendition that covers the longest edge.
-		// 'full' still serves the original, via $full.
-		$longest = max( $w, $h );
-		if ( $longest <= self::PROXY_THUMBNAIL_MAX_EDGE ) {
+		// Pick the smallest Immich rendition that covers the requested size.
+		// Renditions keep the original's aspect ratio, so once $w x $h has
+		// been fitted to it, comparing short edges is enough. Without the
+		// original's dimensions the aspect ratio is unknown, so fall back to
+		// the longest edge. 'full' still serves the original, via $full.
+		$edge       = ( $width > 0 && $height > 0 ) ? min( $w, $h ) : max( $w, $h );
+		$renditions = $this->proxy_rendition_sizes( (int) get_post_field( 'post_author', $attachment_id ) );
+		if ( $edge <= $renditions['thumbnail'] ) {
 			$type = 'thumbnail';
-		} elseif ( $longest <= self::PROXY_PREVIEW_MAX_EDGE ) {
+		} elseif ( $edge <= $renditions['preview'] ) {
 			$type = 'preview';
 		} else {
 			// fullsize, not original: browser-renderable for HEIC/RAW sources
@@ -1669,6 +1677,57 @@ class Immich_Media_Picker {
 			$h,
 			true,
 		);
+	}
+
+	/**
+	 * Short-edge sizes (px) of the Immich server's thumbnail and preview
+	 * renditions, from its image settings.
+	 *
+	 * Reading /api/system-config needs an admin's key with systemConfig.read,
+	 * which the plugin doesn't otherwise require, so any failure falls back to
+	 * Immich's defaults. The answer is cached so page renders don't wait on
+	 * Immich: a day on success, an hour on failure so a key that gains the
+	 * permission is picked up. Saving the settings clears it.
+	 *
+	 * Immich keeps each asset's renditions at the size in force when it
+	 * processed them, so older assets may be larger or smaller than this
+	 * until their thumbnails are regenerated.
+	 *
+	 * @param int $user_id User whose per-user API key to use when no
+	 *                     site-wide key is configured.
+	 * @return array{thumbnail: int, preview: int}
+	 */
+	private function proxy_rendition_sizes( int $user_id = 0 ): array {
+		$cached = get_transient( self::RENDITION_SIZES_TRANSIENT );
+		if ( is_array( $cached ) && isset( $cached['thumbnail'], $cached['preview'] ) ) {
+			return $cached;
+		}
+
+		$sizes = array(
+			'thumbnail' => self::PROXY_DEFAULT_THUMBNAIL_SIZE,
+			'preview'   => self::PROXY_DEFAULT_PREVIEW_SIZE,
+		);
+		$ttl   = HOUR_IN_SECONDS;
+
+		$config = $this->api_request( '/api/system-config', 'GET', null, $user_id, 5 );
+		if ( ! is_wp_error( $config ) ) {
+			$thumbnail = (int) ( $config['image']['thumbnail']['size'] ?? 0 );
+			$preview   = (int) ( $config['image']['preview']['size'] ?? 0 );
+			if ( $thumbnail > 0 && $preview > 0 ) {
+				$sizes = array(
+					'thumbnail' => $thumbnail,
+					'preview'   => $preview,
+				);
+				$ttl   = DAY_IN_SECONDS;
+			}
+		}
+
+		set_transient( self::RENDITION_SIZES_TRANSIENT, $sizes, $ttl );
+		return $sizes;
+	}
+
+	public function flush_rendition_sizes(): void {
+		delete_transient( self::RENDITION_SIZES_TRANSIENT );
 	}
 
 	/**
