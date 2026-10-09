@@ -789,6 +789,8 @@ class Immich_Media_Picker {
 
 		if ( 'original' === $type || 'fullsize' === $type ) {
 			$this->maybe_purge_unstripped_originals();
+		} elseif ( 'video' === $type ) {
+			$this->maybe_purge_unstripped_videos();
 		}
 
 		// Serve from cache if available.
@@ -911,6 +913,20 @@ class Immich_Media_Picker {
 		// GIF originals go out as they are.
 		if ( ( 'original' === $type || 'fullsize' === $type ) && 'image/jpeg' === $content_type
 			&& ! $this->strip_jpeg_file_metadata( $paths['file'] )
+		) {
+			wp_delete_file( $paths['file'] );
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
+			status_header( 502 );
+			exit( 'Could not strip metadata.' );
+		}
+
+		// Immich's playback stream is the original file for videos it hasn't
+		// transcoded, location included. WebM and Ogg aren't parsed; phones
+		// don't record them, and Immich transcodes to MP4.
+		if ( 'video' === $type && in_array( $content_type, array( 'video/mp4', 'video/quicktime' ), true )
+			&& ! $this->strip_video_location( $paths['file'] )
 		) {
 			wp_delete_file( $paths['file'] );
 			flock( $lock_fh, LOCK_UN );
@@ -1181,6 +1197,127 @@ class Immich_Media_Picker {
 			}
 		}
 		return 1;
+	}
+
+	/**
+	 * One-off removal of videos cached before their location metadata was
+	 * stripped. Runs on the first video request after upgrading, before the
+	 * cache is read. Each video is fetched from Immich again once.
+	 */
+	private function maybe_purge_unstripped_videos(): void {
+		if ( get_option( 'immich_video_cache_stripped' ) ) {
+			return;
+		}
+		foreach ( glob( $this->get_cache_root() . '/video/*' ) ?: array() as $path ) {
+			if ( is_file( $path ) && ! str_ends_with( $path, '.lock' ) ) {
+				wp_delete_file( $path );
+			}
+		}
+		update_option( 'immich_video_cache_stripped', 1 );
+	}
+
+	// XMP's UUID box type (be7acfcb-97a9-42e8-9c71-999491e3afac).
+	private const XMP_UUID = "\xBE\x7A\xCF\xCB\x97\xA9\x42\xE8\x9C\x71\x99\x94\x91\xE3\xAF\xAC";
+
+	/**
+	 * Remove the metadata boxes of a cached MP4/MOV file in place, by
+	 * renaming them to `free` and zeroing their contents.
+	 *
+	 * A renamed box keeps its size, so every offset in the file (stco/co64
+	 * chunk offsets included) stays valid and players skip it. Zeroing
+	 * matters because a `free` box's bytes are still in the file for anyone
+	 * who downloads it. Only box headers and the metadata boxes themselves
+	 * are touched, so the cost doesn't depend on the video's size.
+	 *
+	 * Renamed: `udta` and `meta` at the top level, in `moov` and in each
+	 * `trak`, which hold the GPS location (Samsung/Android `©xyz`, Apple's
+	 * `com.apple.quicktime.location.ISO6709` key), device make and model,
+	 * dates and maker boxes such as Samsung's `smta`; and XMP `uuid` and
+	 * `XMP_` boxes. Rotation lives in `tkhd`, which isn't touched.
+	 *
+	 * Not covered: GPS recorded as a timed metadata track (action cameras),
+	 * which lives in the media data.
+	 *
+	 * @return bool False if the file couldn't be opened or its boxes don't
+	 *              parse, so it can be refused rather than served unstripped.
+	 */
+	private function strip_video_location( string $file ): bool {
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- in-place edit of a local cache file
+		$fh = fopen( $file, 'r+b' );
+		if ( ! $fh ) {
+			return false;
+		}
+		$size = filesize( $file );
+		$ok   = false !== $size && $this->strip_video_boxes( $fh, 0, $size, 0 );
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		fclose( $fh );
+		return $ok;
+	}
+
+	/**
+	 * Walk the boxes between $start and $end, renaming metadata boxes and
+	 * descending into `moov` and `trak`.
+	 *
+	 * @param resource $fh    File opened for reading and writing.
+	 * @param int      $depth 0 for the top level, 1 inside moov, 2 inside trak.
+	 */
+	private function strip_video_boxes( $fh, int $start, int $end, int $depth ): bool {
+		// phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fread, WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- in-place edit of a local cache file; WP_Filesystem has no seek
+		$pos = $start;
+		while ( $pos + 8 <= $end ) {
+			fseek( $fh, $pos );
+			$header = fread( $fh, 8 );
+			if ( false === $header || 8 !== strlen( $header ) ) {
+				return false;
+			}
+			$box_size = unpack( 'N', substr( $header, 0, 4 ) )[1];
+			$box_type = substr( $header, 4, 4 );
+			$head_len = 8;
+			if ( 1 === $box_size ) {
+				$large = fread( $fh, 8 );
+				if ( false === $large || 8 !== strlen( $large ) ) {
+					return false;
+				}
+				$box_size = unpack( 'J', $large )[1];
+				$head_len = 16;
+			} elseif ( 0 === $box_size ) {
+				// Runs to the end of the enclosing box.
+				$box_size = $end - $pos;
+			}
+			if ( $box_size < $head_len || $pos + $box_size > $end ) {
+				return false;
+			}
+
+			$rename = in_array( $box_type, array( 'udta', 'meta', 'XMP_' ), true );
+			if ( ! $rename && 'uuid' === $box_type ) {
+				$rename = self::XMP_UUID === fread( $fh, 16 );
+			}
+
+			if ( $rename ) {
+				fseek( $fh, $pos + 4 );
+				if ( 4 !== fwrite( $fh, 'free' ) ) {
+					return false;
+				}
+				// The 64-bit size field (if any) stays; everything after the
+				// header, a uuid box's user type included, is zeroed.
+				fseek( $fh, $pos + $head_len );
+				for ( $left = $box_size - $head_len; $left > 0; $left -= $chunk ) {
+					$chunk = min( $left, 65536 );
+					if ( $chunk !== fwrite( $fh, str_repeat( "\0", $chunk ) ) ) {
+						return false;
+					}
+				}
+			} elseif ( ( 'moov' === $box_type && 0 === $depth ) || ( 'trak' === $box_type && 1 === $depth ) ) {
+				if ( ! $this->strip_video_boxes( $fh, $pos + $head_len, $pos + $box_size, $depth + 1 ) ) {
+					return false;
+				}
+			}
+
+			$pos += $box_size;
+		}
+		// phpcs:enable
+		// Anything left over is shorter than a box header.
+		return true;
 	}
 
 	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video', 'person' );
