@@ -26,6 +26,15 @@ class Immich_Media_Picker {
 
 	private const COPY_SIZE_CHOICES = array( 'original', 'fullsize', 'preview', 'thumbnail' );
 
+	// Shortest edge (px) of Immich's thumbnail and preview renditions at
+	// Immich's default settings; the long edge scales with the aspect ratio.
+	// Used by proxy_rendition_sizes() when the server's own settings can't
+	// be read.
+	private const PROXY_DEFAULT_THUMBNAIL_SIZE = 250;
+	private const PROXY_DEFAULT_PREVIEW_SIZE   = 1440;
+
+	private const RENDITION_SIZES_TRANSIENT = 'immich_rendition_sizes';
+
 	/**
 	 * Singleton instance, set in the constructor.
 	 */
@@ -101,8 +110,11 @@ class Immich_Media_Picker {
 		add_action( 'immich_upgrade_add_mode', array( $this, 'run_add_mode_upgrade' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
+		add_filter( 'render_block_core/image', array( $this, 'filter_image_block_src' ), 10, 2 );
+		add_filter( 'wp_content_img_tag', array( $this, 'filter_content_img_src' ), 10, 3 );
 		add_filter( 'the_content', array( $this, 'maybe_enqueue_lightbox' ) );
 		add_action( 'immich_cache_gc', array( $this, 'run_cache_gc' ) );
+		add_action( 'update_option_immich_settings', array( $this, 'flush_rendition_sizes' ) );
 	}
 
 	/**
@@ -1112,7 +1124,7 @@ class Immich_Media_Picker {
 		exit;
 	}
 
-	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null, int $user_id = 0 ): array|\WP_Error {
+	private function api_request( string $endpoint, string $method = 'GET', ?array $body = null, int $user_id = 0, int $timeout = 30 ): array|\WP_Error {
 		$api_key = $this->get_api_key( $user_id );
 		if ( '' === $api_key ) {
 			return new \WP_Error( 'no_api_key', __( 'No Immich API key configured.', 'media-picker-for-immich' ) );
@@ -1125,7 +1137,7 @@ class Immich_Media_Picker {
 				'Accept'       => 'application/json',
 				'Content-Type' => 'application/json',
 			),
-			'timeout' => 30,
+			'timeout' => $timeout,
 		);
 
 		if ( 'POST' === $method ) {
@@ -1609,41 +1621,196 @@ class Immich_Media_Picker {
 			return $downsize;
 		}
 
-		$meta      = wp_get_attachment_metadata( $attachment_id );
-		$width     = $meta['width'] ?? 0;
-		$height    = $meta['height'] ?? 0;
-		$size_slug = is_array( $size ) ? '' : $size;
+		$meta   = wp_get_attachment_metadata( $attachment_id );
+		$width  = $meta['width'] ?? 0;
+		$height = $meta['height'] ?? 0;
 
-		if ( 'full' === $size_slug ) {
-			return array(
-				home_url( '/?immich_media_proxy=original&id=' . rawurlencode( $immich_id ) ),
-				$width,
-				$height,
-				false,
-			);
-		}
+		$full = array(
+			home_url( '/?immich_media_proxy=original&id=' . rawurlencode( $immich_id ) ),
+			$width,
+			$height,
+			false,
+		);
 
-		// For array sizes (e.g. [100, 100] from srcset), use the requested dimensions.
+		// Target box: the requested [w, h], or the registered size's bounds.
+		// Unknown slugs (and 'full') get the original.
 		if ( is_array( $size ) ) {
-			return array(
-				home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
-				(int) ( $size[0] ?? 250 ),
-				(int) ( $size[1] ?? 250 ),
-				true,
-			);
+			$box_w = (int) ( $size[0] ?? 0 );
+			$box_h = (int) ( $size[1] ?? 0 );
+		} else {
+			$subsizes = wp_get_registered_image_subsizes();
+			if ( ! isset( $subsizes[ $size ] ) ) {
+				return $full;
+			}
+			$box_w = (int) $subsizes[ $size ]['width'];
+			$box_h = (int) $subsizes[ $size ]['height'];
 		}
 
-		// Return accurate dimensions from stored metadata when available.
-		$size_data = $meta['sizes'][ $size_slug ] ?? null;
-		$w         = $size_data['width'] ?? 250;
-		$h         = $size_data['height'] ?? 250;
+		// The proxy can't crop, so fit the original proportionally inside the
+		// box (no upscaling) and ignore the size's crop flag. A 0 box edge
+		// means unconstrained.
+		if ( $width > 0 && $height > 0 ) {
+			list( $w, $h ) = wp_constrain_dimensions( $width, $height, $box_w, $box_h );
+		} else {
+			$w = $box_w;
+			$h = $box_h;
+		}
+
+		// Pick the smallest Immich rendition that covers the requested size.
+		// Renditions keep the original's aspect ratio, so once $w x $h has
+		// been fitted to it, comparing short edges is enough. Without the
+		// original's dimensions the aspect ratio is unknown, so fall back to
+		// the longest edge. 'full' still serves the original, via $full.
+		$edge       = ( $width > 0 && $height > 0 ) ? min( $w, $h ) : max( $w, $h );
+		$renditions = $this->proxy_rendition_sizes( (int) get_post_field( 'post_author', $attachment_id ) );
+		if ( $edge <= $renditions['thumbnail'] ) {
+			$type = 'thumbnail';
+		} elseif ( $edge <= $renditions['preview'] ) {
+			$type = 'preview';
+		} else {
+			// fullsize, not original: browser-renderable for HEIC/RAW sources
+			// and doesn't expose the original file's EXIF/GPS.
+			$type = 'fullsize';
+		}
 
 		return array(
-			home_url( '/?immich_media_proxy=thumbnail&id=' . rawurlencode( $immich_id ) ),
+			home_url( '/?immich_media_proxy=' . $type . '&id=' . rawurlencode( $immich_id ) ),
 			$w,
 			$h,
 			true,
 		);
+	}
+
+	/**
+	 * Short-edge sizes (px) of the Immich server's thumbnail and preview
+	 * renditions, from its image settings.
+	 *
+	 * Reading /api/system-config needs an admin's key with systemConfig.read,
+	 * which the plugin doesn't otherwise require, so any failure falls back to
+	 * Immich's defaults. The answer is cached so page renders don't wait on
+	 * Immich: a day on success, an hour on failure so a key that gains the
+	 * permission is picked up. Saving the settings clears it.
+	 *
+	 * Immich keeps each asset's renditions at the size in force when it
+	 * processed them, so older assets may be larger or smaller than this
+	 * until their thumbnails are regenerated.
+	 *
+	 * @param int $user_id User whose per-user API key to use when no
+	 *                     site-wide key is configured.
+	 * @return array{thumbnail: int, preview: int}
+	 */
+	private function proxy_rendition_sizes( int $user_id = 0 ): array {
+		$cached = get_transient( self::RENDITION_SIZES_TRANSIENT );
+		if ( is_array( $cached ) && isset( $cached['thumbnail'], $cached['preview'] ) ) {
+			return $cached;
+		}
+
+		$sizes = array(
+			'thumbnail' => self::PROXY_DEFAULT_THUMBNAIL_SIZE,
+			'preview'   => self::PROXY_DEFAULT_PREVIEW_SIZE,
+		);
+		$ttl   = HOUR_IN_SECONDS;
+
+		$config = $this->api_request( '/api/system-config', 'GET', null, $user_id, 5 );
+		if ( ! is_wp_error( $config ) ) {
+			$thumbnail = (int) ( $config['image']['thumbnail']['size'] ?? 0 );
+			$preview   = (int) ( $config['image']['preview']['size'] ?? 0 );
+			if ( $thumbnail > 0 && $preview > 0 ) {
+				$sizes = array(
+					'thumbnail' => $thumbnail,
+					'preview'   => $preview,
+				);
+				$ttl   = DAY_IN_SECONDS;
+			}
+		}
+
+		set_transient( self::RENDITION_SIZES_TRANSIENT, $sizes, $ttl );
+		return $sizes;
+	}
+
+	public function flush_rendition_sizes(): void {
+		delete_transient( self::RENDITION_SIZES_TRANSIENT );
+	}
+
+	/**
+	 * Re-pick the proxy URL of a proxied image saved in an Image block.
+	 *
+	 * The editor writes the image's URL into post content when it's
+	 * inserted, so posts saved before filter_image_downsize() chose
+	 * renditions by size still point at the 250px thumbnail. Recompute the
+	 * URL from the block's attachment ID and size on render. Nothing in the
+	 * database changes.
+	 *
+	 * @param string $block_content Rendered block HTML.
+	 * @param array  $block         Parsed block.
+	 */
+	public function filter_image_block_src( string $block_content, array $block ): string {
+		$attachment_id = (int) ( $block['attrs']['id'] ?? 0 );
+		$size          = $block['attrs']['sizeSlug'] ?? '';
+		if ( $attachment_id <= 0 || ! is_string( $size ) || '' === $size ) {
+			return $block_content;
+		}
+		return $this->refresh_proxy_img_src( $block_content, $attachment_id, $size );
+	}
+
+	/**
+	 * Classic-editor counterpart of filter_image_block_src(). Classic posts
+	 * carry the size as a size-{slug} class on the <img> itself. Image block
+	 * <img> tags don't have that class (it's on the <figure>), so they're
+	 * left to the block filter.
+	 *
+	 * @param string $filtered_image The <img> tag.
+	 * @param string $context        Filter context.
+	 * @param int    $attachment_id  Attachment ID from the wp-image-{ID} class, or 0.
+	 */
+	public function filter_content_img_src( string $filtered_image, string $context, int $attachment_id ): string {
+		if ( $attachment_id <= 0 ) {
+			return $filtered_image;
+		}
+		$processor = new \WP_HTML_Tag_Processor( $filtered_image );
+		if ( ! $processor->next_tag( 'img' ) ) {
+			return $filtered_image;
+		}
+		$class = (string) $processor->get_attribute( 'class' );
+		if ( ! preg_match( '/(?:^|\s)size-([\w-]+)/', $class, $match ) ) {
+			return $filtered_image;
+		}
+		return $this->refresh_proxy_img_src( $filtered_image, $attachment_id, $match[1] );
+	}
+
+	/**
+	 * Point the first <img> in $html at the proxy URL filter_image_downsize()
+	 * picks for $size. Only a src that is already a proxy URL for this
+	 * attachment's Immich asset is replaced, so copied attachments, external
+	 * images and blocks whose ID and src disagree are left alone.
+	 */
+	private function refresh_proxy_img_src( string $html, int $attachment_id, string $size ): string {
+		$immich_id = get_post_meta( $attachment_id, '_immich_asset_id', true );
+		if ( ! $immich_id ) {
+			return $html;
+		}
+
+		$processor = new \WP_HTML_Tag_Processor( $html );
+		if ( ! $processor->next_tag( 'img' ) ) {
+			return $html;
+		}
+
+		$src = $processor->get_attribute( 'src' );
+		if ( ! is_string( $src ) ) {
+			return $html;
+		}
+		parse_str( (string) wp_parse_url( $src, PHP_URL_QUERY ), $query );
+		if ( ! isset( $query['immich_media_proxy'] ) || ( $query['id'] ?? '' ) !== $immich_id ) {
+			return $html;
+		}
+
+		$downsize = image_downsize( $attachment_id, $size );
+		if ( ! $downsize || $downsize[0] === $src ) {
+			return $html;
+		}
+
+		$processor->set_attribute( 'src', $downsize[0] );
+		return $processor->get_updated_html();
 	}
 
 	/**
