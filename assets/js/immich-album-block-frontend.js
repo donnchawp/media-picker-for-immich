@@ -6,8 +6,9 @@
  * proxy URL just swaps `immich_media_proxy=preview` (or whatever the gallery
  * was rendered with) for `immich_media_proxy=fullsize` — the signed token
  * (`album_token`) authorises any size for the same asset+post pair.
- * On servers that don't generate fullsize images the proxy serves the
- * preview instead, so the original file never goes out on this path.
+ * The proxy only serves fullsize here as a JPEG, stripped of metadata, and
+ * otherwise (or on servers that don't generate fullsize images) the preview,
+ * so an unstripped original never goes out on this path.
  *
  * While open the visitor can navigate to neighbouring images via on-screen
  * chevron buttons or the keyboard (arrows + Home/End). Dismissal is via the
