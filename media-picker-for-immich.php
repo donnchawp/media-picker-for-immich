@@ -110,6 +110,7 @@ class Immich_Media_Picker {
 		add_action( 'immich_upgrade_add_mode', array( $this, 'run_add_mode_upgrade' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
+		add_filter( 'wp_get_attachment_image_attributes', array( $this, 'filter_attachment_image_srcset' ), 10, 3 );
 		add_filter( 'render_block_core/image', array( $this, 'filter_image_block_src' ), 10, 2 );
 		add_filter( 'wp_content_img_tag', array( $this, 'filter_content_img_src' ), 10, 3 );
 		add_filter( 'the_content', array( $this, 'maybe_enqueue_lightbox' ) );
@@ -738,6 +739,13 @@ class Immich_Media_Picker {
 			if ( 0 === $author_id ) {
 				status_header( 404 );
 				exit( 'Post not found.' );
+			}
+			// Without fullsize generation, Immich answers fullsize with the
+			// original file (EXIF/GPS included) for browser-native formats,
+			// which is the escalation the size check above exists to stop.
+			// The lightbox asks for fullsize client-side, so cap it here.
+			if ( 'fullsize' === $type && ! $this->proxy_rendition_sizes( $author_id )['fullsize'] ) {
+				$type = 'preview';
 			}
 		} else {
 			// Only proxy assets that have been explicitly added via the plugin.
@@ -1665,11 +1673,16 @@ class Immich_Media_Picker {
 		$renditions = $this->proxy_rendition_sizes( (int) get_post_field( 'post_author', $attachment_id ) );
 		if ( $edge <= $renditions['thumbnail'] ) {
 			$type = 'thumbnail';
-		} elseif ( $edge <= $renditions['preview'] ) {
+		} elseif ( $edge <= $renditions['preview'] || ! $renditions['fullsize'] ) {
+			// Without fullsize generation, Immich answers a fullsize request
+			// with the original file for browser-native formats, so larger
+			// sizes are capped at the preview to keep sized images from
+			// quietly becoming the original. This isn't a privacy boundary:
+			// this path still serves `original` to anyone who asks (#47).
 			$type = 'preview';
 		} else {
-			// fullsize, not original: browser-renderable for HEIC/RAW sources
-			// and doesn't expose the original file's EXIF/GPS.
+			// fullsize, not original: a re-encode that's browser-renderable
+			// for HEIC/RAW sources.
 			$type = 'fullsize';
 		}
 
@@ -1683,7 +1696,10 @@ class Immich_Media_Picker {
 
 	/**
 	 * Short-edge sizes (px) of the Immich server's thumbnail and preview
-	 * renditions, from its image settings.
+	 * renditions, and whether it generates fullsize ones, from its image
+	 * settings. With fullsize generation off, Immich answers a fullsize
+	 * request with the original file for browser-native formats (EXIF/GPS
+	 * included) and with the preview for HEIC/RAW.
 	 *
 	 * Reading /api/system-config needs an admin's key with systemConfig.read,
 	 * which the plugin doesn't otherwise require, so any failure falls back to
@@ -1697,17 +1713,18 @@ class Immich_Media_Picker {
 	 *
 	 * @param int $user_id User whose per-user API key to use when no
 	 *                     site-wide key is configured.
-	 * @return array{thumbnail: int, preview: int}
+	 * @return array{thumbnail: int, preview: int, fullsize: bool}
 	 */
 	private function proxy_rendition_sizes( int $user_id = 0 ): array {
 		$cached = get_transient( self::RENDITION_SIZES_TRANSIENT );
-		if ( is_array( $cached ) && isset( $cached['thumbnail'], $cached['preview'] ) ) {
+		if ( is_array( $cached ) && isset( $cached['thumbnail'], $cached['preview'], $cached['fullsize'] ) ) {
 			return $cached;
 		}
 
 		$sizes = array(
 			'thumbnail' => self::PROXY_DEFAULT_THUMBNAIL_SIZE,
 			'preview'   => self::PROXY_DEFAULT_PREVIEW_SIZE,
+			'fullsize'  => false,
 		);
 		$ttl   = HOUR_IN_SECONDS;
 
@@ -1719,6 +1736,7 @@ class Immich_Media_Picker {
 				$sizes = array(
 					'thumbnail' => $thumbnail,
 					'preview'   => $preview,
+					'fullsize'  => ! empty( $config['image']['fullsize']['enabled'] ),
 				);
 				$ttl   = DAY_IN_SECONDS;
 			}
@@ -1780,9 +1798,13 @@ class Immich_Media_Picker {
 
 	/**
 	 * Point the first <img> in $html at the proxy URL filter_image_downsize()
-	 * picks for $size. Only a src that is already a proxy URL for this
-	 * attachment's Immich asset is replaced, so copied attachments, external
-	 * images and blocks whose ID and src disagree are left alone.
+	 * picks for $size, and give it a srcset (and sizes) if it has none. Only
+	 * a src that is already a proxy URL for this attachment's Immich asset is
+	 * touched, so copied attachments, external images and blocks whose ID
+	 * and src disagree are left alone.
+	 *
+	 * Core's wp_filter_content_tags() can't add srcset to these itself: it
+	 * strips the query string from src, which is where the asset ID is.
 	 */
 	private function refresh_proxy_img_src( string $html, int $attachment_id, string $size ): string {
 		$immich_id = get_post_meta( $attachment_id, '_immich_asset_id', true );
@@ -1805,12 +1827,149 @@ class Immich_Media_Picker {
 		}
 
 		$downsize = image_downsize( $attachment_id, $size );
-		if ( ! $downsize || $downsize[0] === $src ) {
+		if ( ! $downsize ) {
 			return $html;
 		}
+		if ( $downsize[0] !== $src ) {
+			$processor->set_attribute( 'src', $downsize[0] );
+		}
 
-		$processor->set_attribute( 'src', $downsize[0] );
+		if ( null === $processor->get_attribute( 'srcset' ) ) {
+			// Prefer the tag's own dimensions, as core does; Image blocks
+			// usually have none, so fall back to the size's.
+			$width  = (int) $processor->get_attribute( 'width' );
+			$height = (int) $processor->get_attribute( 'height' );
+			if ( $width < 1 || $height < 1 ) {
+				$width  = (int) $downsize[1];
+				$height = (int) $downsize[2];
+			}
+			$srcset = $this->proxy_srcset( $attachment_id, $width, $height, $downsize[0] );
+			if ( '' !== $srcset ) {
+				$processor->set_attribute( 'srcset', $srcset );
+				if ( null === $processor->get_attribute( 'sizes' ) ) {
+					$processor->set_attribute( 'sizes', $this->proxy_sizes_attr( $attachment_id, $width, $height, $downsize[0] ) );
+				}
+			}
+		}
+
 		return $processor->get_updated_html();
+	}
+
+	/**
+	 * Add srcset to proxied images from wp_get_attachment_image(), which
+	 * covers featured images. Core's own srcset comes back empty for them
+	 * because the proxy URL doesn't live under the uploads directory.
+	 *
+	 * @param array        $attr       Image attributes.
+	 * @param \WP_Post     $attachment Attachment post.
+	 * @param string|int[] $size       Requested size.
+	 */
+	public function filter_attachment_image_srcset( array $attr, \WP_Post $attachment, $size ): array {
+		if ( ! empty( $attr['srcset'] ) || '' === $this->proxied_image_asset_id( $attachment->ID ) ) {
+			return $attr;
+		}
+
+		$downsize = image_downsize( $attachment->ID, $size );
+		if ( ! $downsize ) {
+			return $attr;
+		}
+
+		$srcset = $this->proxy_srcset( $attachment->ID, (int) $downsize[1], (int) $downsize[2], $downsize[0] );
+		if ( '' === $srcset ) {
+			return $attr;
+		}
+
+		$attr['srcset'] = $srcset;
+		if ( empty( $attr['sizes'] ) ) {
+			$attr['sizes'] = $this->proxy_sizes_attr( $attachment->ID, (int) $downsize[1], (int) $downsize[2], $downsize[0] );
+		}
+		return $attr;
+	}
+
+	/**
+	 * Build a srcset for a proxied image shown at $width x $height from $src.
+	 *
+	 * Candidates are Immich's renditions at their real widths, worked out
+	 * from the original's dimensions and the server's short-edge sizes
+	 * (Immich doesn't upscale, so a small original caps them). fullsize is
+	 * only offered when the server generates it, matching
+	 * filter_image_downsize(): otherwise it's the original file for
+	 * browser-native formats and a copy of the preview for HEIC/RAW.
+	 *
+	 * An image whose $src is the original (Full Size) gets no srcset, so the
+	 * browser keeps loading the file the author chose.
+	 *
+	 * @return string srcset value, or '' when there aren't two distinct
+	 *                candidates or the display size isn't the original's
+	 *                aspect ratio (the proxy can't crop).
+	 */
+	private function proxy_srcset( int $attachment_id, int $width, int $height, string $src ): string {
+		$immich_id = $this->proxied_image_asset_id( $attachment_id );
+		if ( '' === $immich_id || $width < 1 || $height < 1 ) {
+			return '';
+		}
+
+		parse_str( (string) wp_parse_url( $src, PHP_URL_QUERY ), $query );
+		$src_type = $query['immich_media_proxy'] ?? '';
+		if ( ! in_array( $src_type, array( 'thumbnail', 'preview', 'fullsize' ), true ) ) {
+			return '';
+		}
+
+		$meta        = wp_get_attachment_metadata( $attachment_id );
+		$orig_width  = (int) ( $meta['width'] ?? 0 );
+		$orig_height = (int) ( $meta['height'] ?? 0 );
+		if ( $orig_width < 1 || $orig_height < 1 || ! wp_image_matches_ratio( $width, $height, $orig_width, $orig_height ) ) {
+			return '';
+		}
+
+		$renditions = $this->proxy_rendition_sizes( (int) get_post_field( 'post_author', $attachment_id ) );
+		$short_edge = min( $orig_width, $orig_height );
+		$widths     = array(
+			'thumbnail' => (int) round( $orig_width * min( 1, $renditions['thumbnail'] / $short_edge ) ),
+			'preview'   => (int) round( $orig_width * min( 1, $renditions['preview'] / $short_edge ) ),
+		);
+		if ( $renditions['fullsize'] ) {
+			$widths['fullsize'] = $orig_width;
+		}
+
+		// As in core, the cap doesn't apply to the rendition $src uses.
+		$max_width = (int) apply_filters( 'max_srcset_image_width', 2048, array( $width, $height ) ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- core's hook, applied so its existing callbacks also cap proxied srcsets
+		$sources   = array();
+		foreach ( $widths as $type => $candidate_width ) {
+			// Keyed by width, so a larger rendition that's no wider than a
+			// smaller one (a small original) doesn't add a duplicate.
+			if ( isset( $sources[ $candidate_width ] )
+				|| ( $max_width > 0 && $candidate_width > $max_width && $type !== $src_type )
+			) {
+				continue;
+			}
+			$sources[ $candidate_width ] = home_url( '/?immich_media_proxy=' . $type . '&id=' . rawurlencode( $immich_id ) ) . ' ' . $candidate_width . 'w';
+		}
+
+		return count( $sources ) < 2 ? '' : implode( ', ', $sources );
+	}
+
+	/**
+	 * sizes attribute for a proxied image, via core so theme filters on
+	 * wp_calculate_image_sizes still apply.
+	 */
+	private function proxy_sizes_attr( int $attachment_id, int $width, int $height, string $src ): string {
+		return (string) wp_calculate_image_sizes( array( $width, $height ), $src, wp_get_attachment_metadata( $attachment_id ), $attachment_id );
+	}
+
+	/**
+	 * Immich asset ID of an attachment served through the proxy as an image,
+	 * or '' for copied attachments, videos and non-Immich attachments.
+	 */
+	private function proxied_image_asset_id( int $attachment_id ): string {
+		$immich_id = (string) get_post_meta( $attachment_id, '_immich_asset_id', true );
+		if ( '' === $immich_id
+			|| 'copy' === get_post_meta( $attachment_id, '_immich_add_mode', true )
+			|| 'VIDEO' === get_post_meta( $attachment_id, '_immich_asset_type', true )
+		) {
+			return '';
+		}
+		return $immich_id;
 	}
 
 	/**
@@ -2490,6 +2649,11 @@ class Immich_Media_Picker {
 		}
 
 		$size          = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
+		// The proxy serves the preview for fullsize on servers that don't
+		// generate it (see handle_proxy_request()); say so in the URL too.
+		if ( 'fullsize' === $size && ! $this->proxy_rendition_sizes( $author_id )['fullsize'] ) {
+			$size = 'preview';
+		}
 		$columns       = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
 		$show_captions = ! empty( $attrs['showCaptions'] );
 
