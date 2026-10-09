@@ -110,6 +110,8 @@ class Immich_Media_Picker {
 		add_action( 'immich_upgrade_add_mode', array( $this, 'run_add_mode_upgrade' ) );
 		add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 		add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
+		add_filter( 'render_block_core/image', array( $this, 'filter_image_block_src' ), 10, 2 );
+		add_filter( 'wp_content_img_tag', array( $this, 'filter_content_img_src' ), 10, 3 );
 		add_filter( 'the_content', array( $this, 'maybe_enqueue_lightbox' ) );
 		add_action( 'immich_cache_gc', array( $this, 'run_cache_gc' ) );
 		add_action( 'update_option_immich_settings', array( $this, 'flush_rendition_sizes' ) );
@@ -1728,6 +1730,87 @@ class Immich_Media_Picker {
 
 	public function flush_rendition_sizes(): void {
 		delete_transient( self::RENDITION_SIZES_TRANSIENT );
+	}
+
+	/**
+	 * Re-pick the proxy URL of a proxied image saved in an Image block.
+	 *
+	 * The editor writes the image's URL into post content when it's
+	 * inserted, so posts saved before filter_image_downsize() chose
+	 * renditions by size still point at the 250px thumbnail. Recompute the
+	 * URL from the block's attachment ID and size on render. Nothing in the
+	 * database changes.
+	 *
+	 * @param string $block_content Rendered block HTML.
+	 * @param array  $block         Parsed block.
+	 */
+	public function filter_image_block_src( string $block_content, array $block ): string {
+		$attachment_id = (int) ( $block['attrs']['id'] ?? 0 );
+		$size          = $block['attrs']['sizeSlug'] ?? '';
+		if ( $attachment_id <= 0 || ! is_string( $size ) || '' === $size ) {
+			return $block_content;
+		}
+		return $this->refresh_proxy_img_src( $block_content, $attachment_id, $size );
+	}
+
+	/**
+	 * Classic-editor counterpart of filter_image_block_src(). Classic posts
+	 * carry the size as a size-{slug} class on the <img> itself. Image block
+	 * <img> tags don't have that class (it's on the <figure>), so they're
+	 * left to the block filter.
+	 *
+	 * @param string $filtered_image The <img> tag.
+	 * @param string $context        Filter context.
+	 * @param int    $attachment_id  Attachment ID from the wp-image-{ID} class, or 0.
+	 */
+	public function filter_content_img_src( string $filtered_image, string $context, int $attachment_id ): string {
+		if ( $attachment_id <= 0 ) {
+			return $filtered_image;
+		}
+		$processor = new \WP_HTML_Tag_Processor( $filtered_image );
+		if ( ! $processor->next_tag( 'img' ) ) {
+			return $filtered_image;
+		}
+		$class = (string) $processor->get_attribute( 'class' );
+		if ( ! preg_match( '/(?:^|\s)size-([\w-]+)/', $class, $match ) ) {
+			return $filtered_image;
+		}
+		return $this->refresh_proxy_img_src( $filtered_image, $attachment_id, $match[1] );
+	}
+
+	/**
+	 * Point the first <img> in $html at the proxy URL filter_image_downsize()
+	 * picks for $size. Only a src that is already a proxy URL for this
+	 * attachment's Immich asset is replaced, so copied attachments, external
+	 * images and blocks whose ID and src disagree are left alone.
+	 */
+	private function refresh_proxy_img_src( string $html, int $attachment_id, string $size ): string {
+		$immich_id = get_post_meta( $attachment_id, '_immich_asset_id', true );
+		if ( ! $immich_id ) {
+			return $html;
+		}
+
+		$processor = new \WP_HTML_Tag_Processor( $html );
+		if ( ! $processor->next_tag( 'img' ) ) {
+			return $html;
+		}
+
+		$src = $processor->get_attribute( 'src' );
+		if ( ! is_string( $src ) ) {
+			return $html;
+		}
+		parse_str( (string) wp_parse_url( $src, PHP_URL_QUERY ), $query );
+		if ( ! isset( $query['immich_media_proxy'] ) || ( $query['id'] ?? '' ) !== $immich_id ) {
+			return $html;
+		}
+
+		$downsize = image_downsize( $attachment_id, $size );
+		if ( ! $downsize || $downsize[0] === $src ) {
+			return $html;
+		}
+
+		$processor->set_attribute( 'src', $downsize[0] );
+		return $processor->get_updated_html();
 	}
 
 	/**
