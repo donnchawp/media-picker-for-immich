@@ -1262,6 +1262,7 @@ class Immich_Media_Picker {
 	 * @param int      $depth 0 for the top level, 1 inside moov, 2 inside trak.
 	 */
 	private function strip_video_boxes( $fh, int $start, int $end, int $depth ): bool {
+		// phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fread, WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- in-place edit of a local cache file; WP_Filesystem has no seek
 		$pos = $start;
 		while ( $pos + 8 <= $end ) {
 			fseek( $fh, $pos );
@@ -1314,6 +1315,7 @@ class Immich_Media_Picker {
 
 			$pos += $box_size;
 		}
+		// phpcs:enable
 		// Anything left over is shorter than a box header.
 		return true;
 	}
