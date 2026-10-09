@@ -55,7 +55,7 @@ When you create the Immich API key, grant only these permissions — nothing els
 | `person.read` | Populate the people filter dropdown and people thumbnails. |
 | `album.read` | List albums in the picker and fetch their assets for the Album Gallery block. |
 
-Optionally, if the key belongs to an Immich admin, also grant `systemConfig.read`. The plugin then reads the server's thumbnail and preview sizes and serves proxied images from the smallest rendition that covers each requested size. Without it, the plugin assumes Immich's default sizes (250px and 1440px on the short edge).
+Optionally, if the key belongs to an Immich admin, also grant `systemConfig.read`. The plugin then reads the server's thumbnail and preview sizes, and whether it generates fullsize images, and serves proxied images from the smallest rendition that covers each requested size. Without it, the plugin assumes Immich's default sizes (250px and 1440px on the short edge) and no fullsize generation. Proxied images are never served larger than the preview unless the server generates fullsize images, because otherwise Immich's fullsize is the original file, EXIF and GPS location included.
 
 The Settings page and per-user profile field display the same list inline, so you can copy the slugs straight from there into the Immich API key UI.
 

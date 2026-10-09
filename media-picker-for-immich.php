@@ -1666,11 +1666,14 @@ class Immich_Media_Picker {
 		$renditions = $this->proxy_rendition_sizes( (int) get_post_field( 'post_author', $attachment_id ) );
 		if ( $edge <= $renditions['thumbnail'] ) {
 			$type = 'thumbnail';
-		} elseif ( $edge <= $renditions['preview'] ) {
+		} elseif ( $edge <= $renditions['preview'] || ! $renditions['fullsize'] ) {
+			// Without fullsize generation, Immich answers a fullsize request
+			// with the original file (EXIF/GPS included) for browser-native
+			// formats, so larger sizes are capped at the preview.
 			$type = 'preview';
 		} else {
-			// fullsize, not original: browser-renderable for HEIC/RAW sources
-			// and doesn't expose the original file's EXIF/GPS.
+			// fullsize, not original: a re-encode that's browser-renderable
+			// for HEIC/RAW sources.
 			$type = 'fullsize';
 		}
 
@@ -1880,9 +1883,8 @@ class Immich_Media_Picker {
 	 * Candidates are Immich's renditions at their real widths, worked out
 	 * from the original's dimensions and the server's short-edge sizes
 	 * (Immich doesn't upscale, so a small original caps them). fullsize is
-	 * offered when the server generates it, or when $src already uses it, so
-	 * srcset never serves more of the original than $src does or caps the
-	 * image below it. Without generation, fullsize is the original file for
+	 * only offered when the server generates it, matching
+	 * filter_image_downsize(): otherwise it's the original file for
 	 * browser-native formats and a copy of the preview for HEIC/RAW.
 	 *
 	 * An image whose $src is the original (Full Size) gets no srcset, so the
@@ -1919,9 +1921,6 @@ class Immich_Media_Picker {
 		);
 		if ( $renditions['fullsize'] ) {
 			$widths['fullsize'] = $orig_width;
-		} elseif ( 'fullsize' === $src_type ) {
-			$native             = in_array( get_post_mime_type( $attachment_id ), array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' ), true );
-			$widths['fullsize'] = $native ? $orig_width : $widths['preview'];
 		}
 
 		// As in core, the cap doesn't apply to the rendition $src uses.
