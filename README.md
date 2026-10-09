@@ -70,7 +70,7 @@ How large a proxied image goes, including at Full Size, depends on its format:
 - **PNG, WebP and other web formats**: Immich's preview at most. Immich's fullsize version of these is the original file, metadata included.
 - **HEIC, RAW and other formats browsers can't display**: Immich's fullsize version when the server generates it, otherwise the preview.
 
-Videos go out through Immich's playback stream. Unless Immich has transcoded the video, that's the original file, location metadata included.
+Videos go out through Immich's playback stream. Unless Immich has transcoded the video, that's the original file, so MP4 and MOV videos have their metadata boxes (`udta`, `meta` and XMP, which hold the GPS location, device and dates) blanked in the cached copy. The boxes keep their size, so nothing is re-encoded or moved and the cost doesn't depend on the video's size; rotation is kept. WebM and Ogg videos aren't parsed, and GPS that action cameras record as a separate timed-metadata track isn't removed. Videos cached before this are fetched from Immich again once.
 
 Concurrent requests for the same asset are blocked until the first request completes, so each file is only fetched once from Immich.
 
