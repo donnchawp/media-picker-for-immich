@@ -1931,7 +1931,7 @@ class Immich_Media_Picker {
 		}
 
 		// As in core, the cap doesn't apply to the rendition $src uses.
-		$max_width = (int) apply_filters( 'max_srcset_image_width', 2048, array( $width, $height ) );
+		$max_width = (int) apply_filters( 'max_srcset_image_width', 2048, array( $width, $height ) ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- core's hook, applied so its existing callbacks also cap proxied srcsets
 		$sources   = array();
 		foreach ( $widths as $type => $candidate_width ) {
 			// Keyed by width, so a larger rendition that's no wider than a
