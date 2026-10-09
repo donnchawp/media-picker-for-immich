@@ -1675,8 +1675,10 @@ class Immich_Media_Picker {
 			$type = 'thumbnail';
 		} elseif ( $edge <= $renditions['preview'] || ! $renditions['fullsize'] ) {
 			// Without fullsize generation, Immich answers a fullsize request
-			// with the original file (EXIF/GPS included) for browser-native
-			// formats, so larger sizes are capped at the preview.
+			// with the original file for browser-native formats, so larger
+			// sizes are capped at the preview to keep sized images from
+			// quietly becoming the original. This isn't a privacy boundary:
+			// this path still serves `original` to anyone who asks (#47).
 			$type = 'preview';
 		} else {
 			// fullsize, not original: a re-encode that's browser-renderable
