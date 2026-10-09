@@ -105,10 +105,10 @@ This plugin ships an "Immich Album Gallery" Gutenberg block (`immich/album-galle
 Per-block options (sidebar):
 
 - **Columns** (1–8) — grid density.
-- **Image size** — `thumbnail`, `preview` (default), or `fullsize`.
+- **Image size** — `thumbnail`, `preview` (default), or `fullsize`. `fullsize` falls back to `preview` unless the Immich server generates fullsize images (see the optional `systemConfig.read` permission above).
 - **Sort order** — Album order (default), oldest, newest, or random.
 - **Limit** — cap to N images; 0 means all up to the global cap.
-- **Lightbox** — click an image to open the fullsize variant in a centred overlay.
+- **Lightbox** — click an image to open the fullsize variant in a centred overlay, or the preview when the server doesn't generate fullsize images.
 - **Show captions** — render the asset filename below each image.
 - **Show "View on Immich" link** (default off) — when more assets exist in Immich than are rendered, append a link to the album in the Immich web UI. Defaults off because Immich is often only reachable from your LAN/VPN; turn this on only if your Immich URL is reachable from your visitors' browsers.
 

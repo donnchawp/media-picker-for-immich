@@ -740,6 +740,13 @@ class Immich_Media_Picker {
 				status_header( 404 );
 				exit( 'Post not found.' );
 			}
+			// Without fullsize generation, Immich answers fullsize with the
+			// original file (EXIF/GPS included) for browser-native formats,
+			// which is the escalation the size check above exists to stop.
+			// The lightbox asks for fullsize client-side, so cap it here.
+			if ( 'fullsize' === $type && ! $this->proxy_rendition_sizes( $author_id )['fullsize'] ) {
+				$type = 'preview';
+			}
 		} else {
 			// Only proxy assets that have been explicitly added via the plugin.
 			$attachments = get_posts( array(
@@ -2640,6 +2647,11 @@ class Immich_Media_Picker {
 		}
 
 		$size          = $this->validate_image_size( isset( $attrs['imageSize'] ) ? (string) $attrs['imageSize'] : 'preview' );
+		// The proxy serves the preview for fullsize on servers that don't
+		// generate it (see handle_proxy_request()); say so in the URL too.
+		if ( 'fullsize' === $size && ! $this->proxy_rendition_sizes( $author_id )['fullsize'] ) {
+			$size = 'preview';
+		}
 		$columns       = max( 1, min( 8, (int) ( $attrs['columns'] ?? 3 ) ) );
 		$show_captions = ! empty( $attrs['showCaptions'] );
 
