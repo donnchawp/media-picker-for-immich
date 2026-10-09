@@ -55,7 +55,7 @@ When you create the Immich API key, grant only these permissions — nothing els
 | `person.read` | Populate the people filter dropdown and people thumbnails. |
 | `album.read` | List albums in the picker and fetch their assets for the Album Gallery block. |
 
-Optionally, if the key belongs to an Immich admin, also grant `systemConfig.read`. The plugin then reads the server's thumbnail and preview sizes, and whether it generates fullsize images, and serves proxied images from the smallest rendition that covers each requested size. Without it, the plugin assumes Immich's default sizes (250px and 1440px on the short edge) and no fullsize generation. Without fullsize generation, Immich's fullsize is the original file, so sized images are capped at the preview. Images inserted at Full Size still load the original.
+Optionally, if the key belongs to an Immich admin, also grant `systemConfig.read`. The plugin then reads the server's thumbnail and preview sizes, and whether it generates fullsize images (Immich only does for formats browsers can't display, such as HEIC and RAW), and serves proxied images from the smallest rendition that covers each requested size. Without it, the plugin assumes Immich's default sizes (250px and 1440px on the short edge) and no fullsize generation.
 
 The Settings page and per-user profile field display the same list inline, so you can copy the slugs straight from there into the Immich API key UI.
 
@@ -63,7 +63,14 @@ The Settings page and per-user profile field display the same list inline, so yo
 
 When you use "Use Selected", proxied media is cached locally on the WordPress server the first time it's requested. Subsequent requests are served directly from disk without contacting your Immich server. Cached files are stored in `wp-content/cache/immich/` organised by type (`thumbnail/`, `original/`, `video/`).
 
-Original JPEGs, including Full Size images, have their EXIF (GPS location, camera details), XMP and IPTC metadata removed before they're cached, without re-encoding. The orientation and colour profile are kept. Other image formats and videos are never served as the original file: images get Immich's fullsize or preview version, and videos get the playback stream.
+How large a proxied image goes, including at Full Size, depends on its format:
+
+- **JPEG**: the original, at full resolution, with its EXIF (GPS location, camera details), XMP and IPTC metadata removed before it's cached, without re-encoding. The orientation and colour profile are kept.
+- **GIF**: the original, unchanged. GIFs don't carry EXIF, and animations keep playing.
+- **PNG, WebP and other web formats**: Immich's preview at most. Immich's fullsize version of these is the original file, metadata included.
+- **HEIC, RAW and other formats browsers can't display**: Immich's fullsize version when the server generates it, otherwise the preview.
+
+Videos go out through Immich's playback stream. Unless Immich has transcoded the video, that's the original file, location metadata included.
 
 Concurrent requests for the same asset are blocked until the first request completes, so each file is only fetched once from Immich.
 
@@ -98,7 +105,7 @@ The bottom of the Immich tab shows assets you've previously added. Click them to
 
 ### Lightbox
 
-Posts containing Immich images automatically get a lightbox. Clicking an image opens the full-resolution original in an overlay. Press Escape or click anywhere to close.
+Posts containing Immich images automatically get a lightbox. Clicking an image opens it at full size in an overlay. Press Escape or click anywhere to close.
 
 ## Album Gallery block
 
@@ -107,10 +114,10 @@ This plugin ships an "Immich Album Gallery" Gutenberg block (`immich/album-galle
 Per-block options (sidebar):
 
 - **Columns** (1–8) — grid density.
-- **Image size** — `thumbnail`, `preview` (default), or `fullsize`. `fullsize` falls back to `preview` unless the Immich server generates fullsize images (see the optional `systemConfig.read` permission above).
+- **Image size** — `thumbnail`, `preview` (default), or `fullsize`. `fullsize` falls back to `preview` unless the Immich server generates fullsize images (see the optional `systemConfig.read` permission above) and the image's fullsize version is a JPEG, which is served with its metadata removed.
 - **Sort order** — Album order (default), oldest, newest, or random.
 - **Limit** — cap to N images; 0 means all up to the global cap.
-- **Lightbox** — click an image to open the fullsize variant in a centred overlay, or the preview when the server doesn't generate fullsize images.
+- **Lightbox** — click an image to open the fullsize variant in a centred overlay, or the preview when the fullsize variant can't be served (see Image size).
 - **Show captions** — render the asset filename below each image.
 - **Show "View on Immich" link** (default off) — when more assets exist in Immich than are rendered, append a link to the album in the Immich web UI. Defaults off because Immich is often only reachable from your LAN/VPN; turn this on only if your Immich URL is reachable from your visitors' browsers.
 

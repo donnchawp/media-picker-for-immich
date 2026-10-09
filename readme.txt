@@ -52,7 +52,7 @@ This plugin also ships an "Immich Album Gallery" block: insert it in any post, p
 
 = What is the difference between "Use" and "Copy"? =
 
-**Use Selected** creates a virtual attachment that serves images and videos through your WordPress server as a proxy — no files are stored locally. This keeps your WordPress uploads directory lean. Original JPEGs served through the proxy, including Full Size images, have their location and other metadata removed first; the orientation and colour profile are kept. Other formats are served as Immich's fullsize or preview version instead of the original file.
+**Use Selected** creates a virtual attachment that serves images and videos through your WordPress server as a proxy — no files are stored locally. This keeps your WordPress uploads directory lean. How large a proxied image goes, including at Full Size, depends on its format. JPEGs are served at full resolution with their location and other metadata removed; the orientation and colour profile are kept. GIFs are served as the original, which has no EXIF. PNG, WebP and other web formats are capped at Immich's preview, because Immich's fullsize version of these is the original file, metadata included. HEIC, RAW and other formats browsers can't display get Immich's fullsize version when the server generates it, otherwise the preview. Videos go out through Immich's playback stream, which is the original file, location metadata included, unless Immich has transcoded the video.
 
 **Copy Selected** downloads the full original file into `wp-content/uploads/` as a standard WordPress attachment. Use this when you want a local copy independent of your Immich server.
 
@@ -70,7 +70,7 @@ Grant the API key these five permissions — nothing else is required:
 * `person.read` — populate the people filter dropdown and people thumbnails.
 * `album.read` — list albums in the picker and fetch their assets for the Album Gallery block.
 
-Optionally, if the key belongs to an Immich admin, also grant `systemConfig.read`. The plugin then reads the server's thumbnail and preview sizes, and whether it generates fullsize images, and serves proxied images from the smallest rendition that covers each requested size. Without it, the plugin assumes Immich's default sizes (250px and 1440px on the short edge) and no fullsize generation. Without fullsize generation, Immich's fullsize is the original file, so sized images are capped at the preview. Images inserted at Full Size still load the original.
+Optionally, if the key belongs to an Immich admin, also grant `systemConfig.read`. The plugin then reads the server's thumbnail and preview sizes, and whether it generates fullsize images (Immich only does for formats browsers can't display, such as HEIC and RAW), and serves proxied images from the smallest rendition that covers each requested size. Without it, the plugin assumes Immich's default sizes (250px and 1440px on the short edge) and no fullsize generation.
 
 The same list is shown inline on the Settings page and the per-user profile API key field for easy copy-paste into Immich.
 
@@ -84,7 +84,7 @@ When a proxied image or video is requested for the first time, the plugin fetche
 
 = Does the lightbox work automatically? =
 
-Yes. Posts containing proxied Immich images automatically get a lightbox. Clicking an image opens the full-resolution original in an overlay. Press Escape or click anywhere to close.
+Yes. Posts containing proxied Immich images automatically get a lightbox. Clicking an image opens it at full size in an overlay. Press Escape or click anywhere to close.
 
 = How do I embed a whole Immich album in a post? =
 

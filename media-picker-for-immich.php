@@ -687,7 +687,8 @@ class Immich_Media_Picker {
 		// so the response must not be reused across users by shared caches/CDNs.
 		// Album-token and the public attachment proxy paths are stable, anonymous,
 		// and safe to cache publicly for a long time.
-		$is_private = false;
+		$is_private    = false;
+		$attachment_id = 0;
 
 		if ( '' !== $preview_nonce ) {
 			if ( ! wp_verify_nonce( $preview_nonce, 'immich_preview' ) || ! current_user_can( 'upload_files' ) ) {
@@ -754,28 +755,22 @@ class Immich_Media_Picker {
 				status_header( 404 );
 				exit( 'Asset not found.' );
 			}
-			$author_id = (int) get_post_field( 'post_author', $attachments[0] );
+			$attachment_id = (int) $attachments[0];
+			$author_id     = (int) get_post_field( 'post_author', $attachment_id );
 
-			// Anyone can turn a proxied URL into an original request by
-			// editing it, so originals only go out as JPEGs with their
-			// metadata stripped (see strip_jpeg_metadata()). Anything else
-			// gets the largest rendition that isn't the original file, which
-			// also lets Full Size HEIC images display.
-			if ( 'original' === $type ) {
-				$mime = (string) get_post_mime_type( $attachments[0] );
-				if ( str_starts_with( $mime, 'video/' ) ) {
-					$type = 'video';
-				} elseif ( 'image/jpeg' !== $mime ) {
-					$type = $this->proxy_rendition_sizes( $author_id )['fullsize'] ? 'fullsize' : 'preview';
-				}
+			// Anyone can turn a proxied URL into an original or fullsize
+			// request by editing it, and Immich's fullsize is the original
+			// file for web formats, so both get the largest rendition that's
+			// safe to serve for this format.
+			if ( 'original' === $type || 'fullsize' === $type ) {
+				$type = $this->proxy_top_rendition( $attachment_id );
 			}
 		}
 
-		// Without fullsize generation, Immich answers fullsize with the
-		// original file, metadata and all, for browser-native formats. The
-		// plugin doesn't print fullsize URLs on such servers, but a URL is
-		// one edit away from asking, and the album lightbox asks for fullsize
-		// client-side, so every path gets the preview instead.
+		// On servers that don't generate fullsize images, Immich's fullsize
+		// is the original file for web formats and the preview for the rest,
+		// so the preview is the most it's safe to serve. The album lightbox
+		// asks for fullsize client-side whatever the server does.
 		if ( 'fullsize' === $type && ! $this->proxy_rendition_sizes( $author_id )['fullsize'] ) {
 			$type = 'preview';
 		}
@@ -784,9 +779,9 @@ class Immich_Media_Picker {
 			'thumbnail' => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'preview'   => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'fullsize'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
-			// JPEG only, because that's the only format strip_jpeg_metadata()
-			// can clean. The original cache never holds anything else.
-			'original'  => array( 'image/jpeg' ),
+			// JPEGs, which strip_jpeg_metadata() cleans, and GIFs, which have
+			// no EXIF. The original cache never holds anything else.
+			'original'  => array( 'image/jpeg', 'image/gif' ),
 			'video'     => array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' ),
 		);
 
@@ -874,6 +869,34 @@ class Immich_Media_Picker {
 		}
 
 		$content_type = strtok( wp_remote_retrieve_header( $response, 'content-type' ) ?: 'application/octet-stream', ';' );
+
+		// Two responses that mean asking again for something else:
+		// - fullsize without an attachment (album and preview paths): only a
+		//   JPEG, stripped below, is safe, as anything else may be a web
+		//   format's original file. Fall back to the preview.
+		// - an original that isn't a JPEG or GIF: the attachment was made
+		//   before its real type was recorded, and says image/jpeg because
+		//   WordPress doesn't list the format (HEIC, RAW, AVIF). Record it
+		//   so proxy_top_rendition() picks a rendition for that format.
+		$retry_type = '';
+		if ( 'fullsize' === $type && 0 === $attachment_id && 'image/jpeg' !== $content_type ) {
+			$retry_type = 'preview';
+		} elseif ( 'original' === $type && $attachment_id > 0
+			&& ! in_array( $content_type, $allowed_types['original'], true )
+			&& str_starts_with( $content_type, 'image/' )
+			&& update_post_meta( $attachment_id, '_immich_mime_type', sanitize_mime_type( $content_type ) )
+		) {
+			$retry_type = 'original';
+		}
+		if ( '' !== $retry_type ) {
+			wp_delete_file( $paths['file'] );
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
+			wp_safe_redirect( add_query_arg( 'immich_media_proxy', $retry_type ) );
+			exit;
+		}
+
 		if ( ! in_array( $content_type, $allowed_types[ $type ], true ) ) {
 			wp_delete_file( $paths['file'] );
 			flock( $lock_fh, LOCK_UN );
@@ -883,9 +906,10 @@ class Immich_Media_Picker {
 			exit( 'Unexpected content type.' );
 		}
 
-		// Generated fullsize images are Immich re-encodes, but strip those too
-		// so no JPEG from either size leaves with EXIF/GPS.
-		if ( ( 'original' === $type || ( 'fullsize' === $type && 'image/jpeg' === $content_type ) )
+		// Strip JPEG originals, and fullsize JPEGs too: a generated one is an
+		// Immich re-encode, but on the album path it may be the original.
+		// GIF originals go out as they are.
+		if ( ( 'original' === $type || 'fullsize' === $type ) && 'image/jpeg' === $content_type
 			&& ! $this->strip_jpeg_file_metadata( $paths['file'] )
 		) {
 			wp_delete_file( $paths['file'] );
@@ -961,13 +985,14 @@ class Immich_Media_Picker {
 
 	/**
 	 * One-off removal of original and fullsize files cached before they were
-	 * stripped of metadata (fullsize is the original file on servers that
-	 * don't generate it). Runs on the first request for either size after
-	 * upgrading, before the cache is read, so an unstripped file is never
-	 * served from disk.
+	 * stripped of metadata, or before each format got its own safe rendition
+	 * (Immich's fullsize is the original file for web formats). Runs on the
+	 * first request for either size after upgrading, before the cache is
+	 * read, so an unstripped file is never served from disk. Bump the
+	 * version when what may be cached under either size changes.
 	 */
 	private function maybe_purge_unstripped_originals(): void {
-		if ( get_option( 'immich_original_cache_stripped' ) ) {
+		if ( 2 <= (int) get_option( 'immich_original_cache_stripped' ) ) {
 			return;
 		}
 		$root  = $this->get_cache_root();
@@ -977,7 +1002,7 @@ class Immich_Media_Picker {
 				wp_delete_file( $path );
 			}
 		}
-		update_option( 'immich_original_cache_stripped', 1 );
+		update_option( 'immich_original_cache_stripped', 2 );
 	}
 
 	/**
@@ -1875,7 +1900,8 @@ class Immich_Media_Picker {
 		);
 
 		// Target box: the requested [w, h], or the registered size's bounds.
-		// Unknown slugs (and 'full') get the original.
+		// Unknown slugs (and 'full') get the original URL, which the proxy
+		// answers with the format's largest safe rendition.
 		if ( is_array( $size ) ) {
 			$box_w = (int) ( $size[0] ?? 0 );
 			$box_h = (int) ( $size[1] ?? 0 );
@@ -1902,21 +1928,17 @@ class Immich_Media_Picker {
 		// Renditions keep the original's aspect ratio, so once $w x $h has
 		// been fitted to it, comparing short edges is enough. Without the
 		// original's dimensions the aspect ratio is unknown, so fall back to
-		// the longest edge. 'full' still serves the original, via $full.
+		// the longest edge. 'full' still gets the original URL, via $full.
 		$edge       = ( $width > 0 && $height > 0 ) ? min( $w, $h ) : max( $w, $h );
 		$renditions = $this->proxy_rendition_sizes( (int) get_post_field( 'post_author', $attachment_id ) );
 		if ( $edge <= $renditions['thumbnail'] ) {
 			$type = 'thumbnail';
-		} elseif ( $edge <= $renditions['preview'] || ! $renditions['fullsize'] ) {
-			// Without fullsize generation, Immich answers a fullsize request
-			// with the original file for browser-native formats, so larger
-			// sizes are capped at the preview to keep sized images from
-			// quietly becoming the original. The proxy enforces the same cap
-			// and strips metadata from originals itself.
+		} elseif ( $edge <= $renditions['preview'] || 'preview' === $this->proxy_top_rendition( $attachment_id ) ) {
 			$type = 'preview';
 		} else {
-			// fullsize, not original: a re-encode that's browser-renderable
-			// for HEIC/RAW sources.
+			// The proxy serves fullsize as the format's largest safe
+			// rendition: the stripped original for JPEG, a generated
+			// re-encode for HEIC/RAW.
 			$type = 'fullsize';
 		}
 
@@ -1931,9 +1953,9 @@ class Immich_Media_Picker {
 	/**
 	 * Short-edge sizes (px) of the Immich server's thumbnail and preview
 	 * renditions, and whether it generates fullsize ones, from its image
-	 * settings. With fullsize generation off, Immich answers a fullsize
-	 * request with the original file for browser-native formats (EXIF/GPS
-	 * included) and with the preview for HEIC/RAW.
+	 * settings. Generation only applies to formats browsers can't display
+	 * (HEIC, RAW): with it off, Immich answers fullsize for those with the
+	 * preview. For web formats fullsize is always the original file.
 	 *
 	 * Reading /api/system-config needs an admin's key with systemConfig.read,
 	 * which the plugin doesn't otherwise require, so any failure falls back to
@@ -1978,6 +2000,40 @@ class Immich_Media_Picker {
 
 		set_transient( self::RENDITION_SIZES_TRANSIENT, $sizes, $ttl );
 		return $sizes;
+	}
+
+	/**
+	 * The largest rendition of a proxied attachment that's safe to serve to
+	 * anyone, by format. Immich answers fullsize with the original file,
+	 * metadata included, for web formats, whatever its fullsize setting.
+	 *
+	 * - JPEG: the original, which the proxy strips of metadata.
+	 * - GIF: the original as it is. GIF has no EXIF, and it keeps animations.
+	 * - Other web formats (PNG, WebP, AVIF, BMP): the preview.
+	 * - Anything else (HEIC, RAW): fullsize when the server generates it,
+	 *   which is a re-encode, or the preview.
+	 * - Videos: the playback stream.
+	 *
+	 * @return string 'original', 'fullsize', 'preview' or 'video'.
+	 */
+	private function proxy_top_rendition( int $attachment_id ): string {
+		// The post's mime type is image/jpeg for formats WordPress doesn't
+		// list, so prefer the type Immich reported, where it's been recorded.
+		$mime = (string) get_post_meta( $attachment_id, '_immich_mime_type', true );
+		if ( '' === $mime ) {
+			$mime = (string) get_post_mime_type( $attachment_id );
+		}
+
+		if ( str_starts_with( $mime, 'video/' ) ) {
+			return 'video';
+		}
+		if ( 'image/jpeg' === $mime || 'image/gif' === $mime ) {
+			return 'original';
+		}
+		if ( in_array( $mime, array( 'image/png', 'image/apng', 'image/webp', 'image/avif', 'image/bmp' ), true ) ) {
+			return 'preview';
+		}
+		return $this->proxy_rendition_sizes( (int) get_post_field( 'post_author', $attachment_id ) )['fullsize'] ? 'fullsize' : 'preview';
 	}
 
 	public function flush_rendition_sizes(): void {
@@ -2125,10 +2181,10 @@ class Immich_Media_Picker {
 	 *
 	 * Candidates are Immich's renditions at their real widths, worked out
 	 * from the original's dimensions and the server's short-edge sizes
-	 * (Immich doesn't upscale, so a small original caps them). fullsize is
-	 * only offered when the server generates it, matching
-	 * filter_image_downsize(): otherwise it's the original file for
-	 * browser-native formats and a copy of the preview for HEIC/RAW.
+	 * (Immich doesn't upscale, so a small original caps them). fullsize, at
+	 * the original's width, is only offered when the format's largest safe
+	 * rendition is bigger than the preview (see proxy_top_rendition()),
+	 * matching filter_image_downsize().
 	 *
 	 * An image whose $src is the original (Full Size) gets no srcset, so the
 	 * browser keeps loading the file the author chose.
@@ -2162,7 +2218,7 @@ class Immich_Media_Picker {
 			'thumbnail' => (int) round( $orig_width * min( 1, $renditions['thumbnail'] / $short_edge ) ),
 			'preview'   => (int) round( $orig_width * min( 1, $renditions['preview'] / $short_edge ) ),
 		);
-		if ( $renditions['fullsize'] ) {
+		if ( 'preview' !== $this->proxy_top_rendition( $attachment_id ) ) {
 			$widths['fullsize'] = $orig_width;
 		}
 
@@ -2646,6 +2702,9 @@ class Immich_Media_Picker {
 		update_post_meta( $attach_id, '_immich_asset_id', $id );
 		update_post_meta( $attach_id, '_immich_asset_type', $asset_type );
 		update_post_meta( $attach_id, '_immich_add_mode', 'select' );
+		// post_mime_type falls back to image/jpeg for formats WordPress doesn't
+		// list, such as HEIC; proxy_top_rendition() needs the real one.
+		update_post_meta( $attach_id, '_immich_mime_type', sanitize_mime_type( (string) ( $info['originalMimeType'] ?? '' ) ) );
 
 		$metadata = array( 'file' => 'immich-proxy/' . $id );
 		if ( $width > 0 && $height > 0 ) {
