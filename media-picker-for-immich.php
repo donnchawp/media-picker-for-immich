@@ -740,13 +740,6 @@ class Immich_Media_Picker {
 				status_header( 404 );
 				exit( 'Post not found.' );
 			}
-			// Without fullsize generation, Immich answers fullsize with the
-			// original file (EXIF/GPS included) for browser-native formats,
-			// which is the escalation the size check above exists to stop.
-			// The lightbox asks for fullsize client-side, so cap it here.
-			if ( 'fullsize' === $type && ! $this->proxy_rendition_sizes( $author_id )['fullsize'] ) {
-				$type = 'preview';
-			}
 		} else {
 			// Only proxy assets that have been explicitly added via the plugin.
 			$attachments = get_posts( array(
@@ -762,17 +755,46 @@ class Immich_Media_Picker {
 				exit( 'Asset not found.' );
 			}
 			$author_id = (int) get_post_field( 'post_author', $attachments[0] );
+
+			// Anyone can turn a proxied URL into an original request by
+			// editing it, so originals only go out as JPEGs with their
+			// metadata stripped (see strip_jpeg_metadata()). Anything else
+			// gets the largest rendition that isn't the original file, which
+			// also lets Full Size HEIC images display.
+			if ( 'original' === $type ) {
+				$mime = (string) get_post_mime_type( $attachments[0] );
+				if ( str_starts_with( $mime, 'video/' ) ) {
+					$type = 'video';
+				} elseif ( 'image/jpeg' !== $mime ) {
+					$type = $this->proxy_rendition_sizes( $author_id )['fullsize'] ? 'fullsize' : 'preview';
+				}
+			}
+		}
+
+		// Without fullsize generation, Immich answers fullsize with the
+		// original file, metadata and all, for browser-native formats. The
+		// plugin doesn't print fullsize URLs on such servers, but a URL is
+		// one edit away from asking, and the album lightbox asks for fullsize
+		// client-side, so every path gets the preview instead.
+		if ( 'fullsize' === $type && ! $this->proxy_rendition_sizes( $author_id )['fullsize'] ) {
+			$type = 'preview';
 		}
 
 		$allowed_types = array(
 			'thumbnail' => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'preview'   => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
 			'fullsize'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif' ),
-			'original'  => array( 'image/jpeg', 'image/webp', 'image/png', 'image/gif', 'image/tiff', 'video/mp4', 'video/quicktime' ),
+			// JPEG only, because that's the only format strip_jpeg_metadata()
+			// can clean. The original cache never holds anything else.
+			'original'  => array( 'image/jpeg' ),
 			'video'     => array( 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime' ),
 		);
 
 		$paths = $this->get_cache_paths( $type, $id );
+
+		if ( 'original' === $type || 'fullsize' === $type ) {
+			$this->maybe_purge_unstripped_originals();
+		}
 
 		// Serve from cache if available.
 		if ( file_exists( $paths['file'] ) && file_exists( $paths['meta'] ) ) {
@@ -861,6 +883,19 @@ class Immich_Media_Picker {
 			exit( 'Unexpected content type.' );
 		}
 
+		// Generated fullsize images are Immich re-encodes, but strip those too
+		// so no JPEG from either size leaves with EXIF/GPS.
+		if ( ( 'original' === $type || ( 'fullsize' === $type && 'image/jpeg' === $content_type ) )
+			&& ! $this->strip_jpeg_file_metadata( $paths['file'] )
+		) {
+			wp_delete_file( $paths['file'] );
+			flock( $lock_fh, LOCK_UN );
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			fclose( $lock_fh );
+			status_header( 502 );
+			exit( 'Could not strip metadata.' );
+		}
+
 		// Write content-type metadata, then release the lock.
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- writing single-line cache metadata
 		file_put_contents( $paths['meta'], $content_type );
@@ -922,6 +957,205 @@ class Immich_Media_Picker {
 			'meta' => $cache_dir . '/' . $id . '.type',
 			'lock' => $cache_dir . '/' . $id . '.lock',
 		);
+	}
+
+	/**
+	 * One-off removal of original and fullsize files cached before they were
+	 * stripped of metadata (fullsize is the original file on servers that
+	 * don't generate it). Runs on the first request for either size after
+	 * upgrading, before the cache is read, so an unstripped file is never
+	 * served from disk.
+	 */
+	private function maybe_purge_unstripped_originals(): void {
+		if ( get_option( 'immich_original_cache_stripped' ) ) {
+			return;
+		}
+		$root  = $this->get_cache_root();
+		$paths = array_merge( glob( $root . '/original/*' ) ?: array(), glob( $root . '/fullsize/*' ) ?: array() );
+		foreach ( $paths as $path ) {
+			if ( is_file( $path ) && ! str_ends_with( $path, '.lock' ) ) {
+				wp_delete_file( $path );
+			}
+		}
+		update_option( 'immich_original_cache_stripped', 1 );
+	}
+
+	/**
+	 * Strip metadata from a cached JPEG original in place.
+	 *
+	 * @return bool False if the file couldn't be read, parsed or written.
+	 */
+	private function strip_jpeg_file_metadata( string $file ): bool {
+		wp_raise_memory_limit( 'image' );
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local cache file
+		$data = file_get_contents( $file );
+		if ( false === $data ) {
+			return false;
+		}
+		$clean = $this->strip_jpeg_metadata( $data );
+		if ( null === $clean ) {
+			return false;
+		}
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- local cache file
+		return false !== file_put_contents( $file, $clean );
+	}
+
+	/**
+	 * Rebuild a JPEG without its metadata, without re-encoding it.
+	 *
+	 * Keeps the segments needed to decode and display the image: everything
+	 * that isn't an APPn or comment, plus APP0 (JFIF), the APP2 ICC colour
+	 * profile and APP14 (Adobe colour transform). Drops EXIF (GPS, camera,
+	 * dates, maker notes), XMP, IPTC, MPF and comments, and anything after
+	 * the end-of-image marker, where phones put motion photos and secondary
+	 * images that carry their own EXIF. The EXIF orientation is kept, as a
+	 * minimal EXIF block with only that tag, so rotated photos still display
+	 * upright.
+	 *
+	 * @param string $data JPEG bytes.
+	 * @return string|null Cleaned JPEG, or null if $data isn't a JPEG this can parse.
+	 */
+	private function strip_jpeg_metadata( string $data ): ?string {
+		$length = strlen( $data );
+		if ( $length < 4 || "\xFF\xD8" !== substr( $data, 0, 2 ) ) {
+			return null;
+		}
+
+		$segments    = array();
+		$orientation = 1;
+		$i           = 2;
+		while ( $i + 1 < $length ) {
+			if ( "\xFF" !== $data[ $i ] ) {
+				return null;
+			}
+			$marker = ord( $data[ $i + 1 ] );
+
+			if ( 0xFF === $marker ) {
+				// Fill byte before a marker.
+				++$i;
+				continue;
+			}
+			if ( 0xD9 === $marker ) {
+				return $this->assemble_stripped_jpeg( $segments, $orientation );
+			}
+			if ( 0x01 === $marker || ( $marker >= 0xD0 && $marker <= 0xD7 ) ) {
+				// Markers without a length field.
+				$segments[] = substr( $data, $i, 2 );
+				$i         += 2;
+				continue;
+			}
+
+			if ( $i + 4 > $length ) {
+				return null;
+			}
+			$size = unpack( 'n', substr( $data, $i + 2, 2 ) )[1];
+			if ( $size < 2 || $i + 2 + $size > $length ) {
+				return null;
+			}
+			$segment = substr( $data, $i, 2 + $size );
+			$i      += 2 + $size;
+
+			if ( 0xDA === $marker ) {
+				// Start of scan: the entropy-coded data runs to the next
+				// marker that isn't a stuffed 0xFF00, a restart marker or a
+				// fill byte. Progressive JPEGs have several scans.
+				$end = $i;
+				while ( true ) {
+					$end = strpos( $data, "\xFF", $end );
+					if ( false === $end || $end + 1 >= $length ) {
+						return null;
+					}
+					$next = ord( $data[ $end + 1 ] );
+					if ( 0x00 === $next || ( $next >= 0xD0 && $next <= 0xD7 ) ) {
+						$end += 2;
+						continue;
+					}
+					if ( 0xFF === $next ) {
+						++$end;
+						continue;
+					}
+					break;
+				}
+				$segments[] = $segment . substr( $data, $i, $end - $i );
+				$i          = $end;
+				continue;
+			}
+
+			$payload = substr( $segment, 4 );
+			if ( 0xE1 === $marker && str_starts_with( $payload, "Exif\0\0" ) ) {
+				$orientation = $this->exif_orientation( substr( $payload, 6 ) );
+				continue;
+			}
+
+			$is_app_or_comment = ( $marker >= 0xE0 && $marker <= 0xEF ) || 0xFE === $marker;
+			if ( ! $is_app_or_comment
+				|| 0xE0 === $marker
+				|| ( 0xE2 === $marker && str_starts_with( $payload, "ICC_PROFILE\0" ) )
+				|| ( 0xEE === $marker && str_starts_with( $payload, 'Adobe' ) )
+			) {
+				$segments[] = $segment;
+			}
+		}
+
+		// Ran out of data before the end-of-image marker.
+		return null;
+	}
+
+	/**
+	 * Join the segments kept by strip_jpeg_metadata() into a JPEG, adding a
+	 * minimal EXIF block for a non-default orientation. It goes after APP0
+	 * when there is one, since JFIF expects APP0 straight after SOI.
+	 */
+	private function assemble_stripped_jpeg( array $segments, int $orientation ): string {
+		if ( 1 !== $orientation ) {
+			// Big-endian TIFF header, then IFD0 with one SHORT entry
+			// (Orientation, 0x0112) and no next IFD.
+			$tiff = "MM\x00\x2A" . pack( 'N', 8 ) . pack( 'n', 1 ) . pack( 'nnN', 0x0112, 3, 1 ) . pack( 'nn', $orientation, 0 ) . pack( 'N', 0 );
+			$app1 = "\xFF\xE1" . pack( 'n', 2 + 6 + strlen( $tiff ) ) . "Exif\0\0" . $tiff;
+			$at   = ( $segments && str_starts_with( $segments[0], "\xFF\xE0" ) ) ? 1 : 0;
+			array_splice( $segments, $at, 0, array( $app1 ) );
+		}
+		return "\xFF\xD8" . implode( '', $segments ) . "\xFF\xD9";
+	}
+
+	/**
+	 * Read the Orientation tag (1-8) from IFD0 of an EXIF TIFF block.
+	 *
+	 * @param string $tiff EXIF payload after the "Exif\0\0" header.
+	 * @return int The orientation, or 1 (upright) if it's missing or unreadable.
+	 */
+	private function exif_orientation( string $tiff ): int {
+		$tiff_length = strlen( $tiff );
+		if ( $tiff_length < 8 ) {
+			return 1;
+		}
+		$byte_order = substr( $tiff, 0, 2 );
+		if ( 'II' === $byte_order ) {
+			$u16 = 'v';
+			$u32 = 'V';
+		} elseif ( 'MM' === $byte_order ) {
+			$u16 = 'n';
+			$u32 = 'N';
+		} else {
+			return 1;
+		}
+
+		$ifd = unpack( $u32, substr( $tiff, 4, 4 ) )[1];
+		if ( $ifd + 2 > $tiff_length ) {
+			return 1;
+		}
+		$count = unpack( $u16, substr( $tiff, $ifd, 2 ) )[1];
+		for ( $n = 0; $n < $count; $n++ ) {
+			$entry = $ifd + 2 + 12 * $n;
+			if ( $entry + 12 > $tiff_length ) {
+				break;
+			}
+			if ( 0x0112 === unpack( $u16, substr( $tiff, $entry, 2 ) )[1] ) {
+				$value = unpack( $u16, substr( $tiff, $entry + 8, 2 ) )[1];
+				return ( $value >= 1 && $value <= 8 ) ? $value : 1;
+			}
+		}
+		return 1;
 	}
 
 	private const CACHE_TYPES = array( 'thumbnail', 'preview', 'fullsize', 'original', 'video', 'person' );
@@ -1677,8 +1911,8 @@ class Immich_Media_Picker {
 			// Without fullsize generation, Immich answers a fullsize request
 			// with the original file for browser-native formats, so larger
 			// sizes are capped at the preview to keep sized images from
-			// quietly becoming the original. This isn't a privacy boundary:
-			// this path still serves `original` to anyone who asks (#47).
+			// quietly becoming the original. The proxy enforces the same cap
+			// and strips metadata from originals itself.
 			$type = 'preview';
 		} else {
 			// fullsize, not original: a re-encode that's browser-renderable
