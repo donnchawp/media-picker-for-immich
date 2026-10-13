@@ -1665,9 +1665,10 @@ class Immich_Media_Picker {
 		}
 
 		// On the Media Library page, depend on media-grid so our script
-		// loads after MediaFrame.Manage is defined.
+		// loads after MediaFrame.Manage is defined. Front-end pages that open
+		// the media modal have no screen.
 		$deps = array( 'jquery', 'media-views', 'wp-i18n' );
-		$screen = get_current_screen();
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
 		if ( $screen && 'upload' === $screen->id ) {
 			$deps[] = 'media-grid';
 		}
