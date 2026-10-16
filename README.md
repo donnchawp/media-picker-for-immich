@@ -23,7 +23,7 @@ A WordPress plugin that adds an **Immich** tab to the WordPress media picker and
 
 - WordPress 6.5+
 - PHP 8.0+
-- An [Immich](https://immich.app/) server accessible from your WordPress server (compatible with Immich v2.x and v3.x)
+- An [Immich](https://immich.app/) server accessible from your WordPress server (compatible with Immich v2.x and v3.x, tested up to v3.3.3)
 
 ## Installation
 
